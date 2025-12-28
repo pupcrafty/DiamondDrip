@@ -1,0 +1,6 @@
+# DiamondDrip Prediction Server Requirements
+# SQLite is included in Python's standard library, so no database dependencies needed
+
+# Optional: For SSL certificate generation (if cryptography is not available, falls back to openssl)
+# cryptography
+

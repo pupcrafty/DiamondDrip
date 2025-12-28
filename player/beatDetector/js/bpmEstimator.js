@@ -23,6 +23,10 @@ const BPM_ESTIMATOR = (function() {
     let hasLoggedHyperSmoothedBPM = false; // Track if we've logged first hyper-smoothed BPM
     let hyperSmoothedBPMHistory = []; // History of hyper-smoothed BPM values
     const MAX_BPM_HISTORY = 20; // Keep last 20 BPM values
+    let serverBPMHint = null; // Server-provided BPM hint (from prediction server)
+    let serverBPMHintTime = null; // Timestamp when server hint was received
+    const SERVER_BPM_HINT_MAX_AGE = 30.0; // Server hint is valid for 30 seconds
+    const SERVER_BPM_WEIGHT = 0.25; // Weight for server BPM (25% server, 75% local)
 
     function calculateBPM() {
         if (beatTimes.length < MIN_BEATS_FOR_BPM) {
@@ -105,8 +109,24 @@ const BPM_ESTIMATOR = (function() {
         // If we have fewer than 4 samples, just add it and use the average
         if (bpmSamples.length < 4) {
             bpmSamples.push(newSample);
-            const avg = bpmSamples.reduce((a, b) => a + b, 0) / bpmSamples.length;
-            hyperSmoothedBPM = avg;
+            let localAvg = bpmSamples.reduce((a, b) => a + b, 0) / bpmSamples.length;
+            
+            // Apply server BPM hint if available and recent
+            const currentTime = performance.now() / 1000.0;
+            if (serverBPMHint !== null && serverBPMHintTime !== null) {
+                const hintAge = currentTime - serverBPMHintTime;
+                if (hintAge < SERVER_BPM_HINT_MAX_AGE && serverBPMHint > 0) {
+                    // Use weighted average: favor local estimate but incorporate server hint
+                    hyperSmoothedBPM = (1 - SERVER_BPM_WEIGHT) * localAvg + SERVER_BPM_WEIGHT * serverBPMHint;
+                } else {
+                    // Server hint is stale, use local estimate
+                    hyperSmoothedBPM = localAvg;
+                }
+            } else {
+                // No server hint available, use local estimate
+                hyperSmoothedBPM = localAvg;
+            }
+            
             // If BPM exceeds MAX_BPM_BEFORE_HALVING, assume double counting and halve it
             if (hyperSmoothedBPM > MAX_BPM_BEFORE_HALVING) {
                 hyperSmoothedBPM = hyperSmoothedBPM / 2;
@@ -145,7 +165,24 @@ const BPM_ESTIMATOR = (function() {
             bpmSamples.push(newSample);
             acceptedBpmCount++;
             // Update hyperSmoothedBPM to average of kept samples
-            hyperSmoothedBPM = bpmSamples.reduce((a, b) => a + b, 0) / bpmSamples.length;
+            let localBPM = bpmSamples.reduce((a, b) => a + b, 0) / bpmSamples.length;
+            
+            // Apply server BPM hint if available and recent
+            const currentTime = performance.now() / 1000.0;
+            if (serverBPMHint !== null && serverBPMHintTime !== null) {
+                const hintAge = currentTime - serverBPMHintTime;
+                if (hintAge < SERVER_BPM_HINT_MAX_AGE && serverBPMHint > 0) {
+                    // Use weighted average: favor local estimate but incorporate server hint
+                    hyperSmoothedBPM = (1 - SERVER_BPM_WEIGHT) * localBPM + SERVER_BPM_WEIGHT * serverBPMHint;
+                } else {
+                    // Server hint is stale, use local estimate
+                    hyperSmoothedBPM = localBPM;
+                }
+            } else {
+                // No server hint available, use local estimate
+                hyperSmoothedBPM = localBPM;
+            }
+            
             // If BPM exceeds MAX_BPM_BEFORE_HALVING, assume double counting and halve it
             if (hyperSmoothedBPM > MAX_BPM_BEFORE_HALVING) {
                 hyperSmoothedBPM = hyperSmoothedBPM / 2;
@@ -169,8 +206,22 @@ const BPM_ESTIMATOR = (function() {
                 droppedBpmValues.shift();
             }
             
-            // Keep hyperSmoothedBPM as average of existing samples (unchanged)
-            hyperSmoothedBPM = avg;
+            // Keep hyperSmoothedBPM as average of existing samples, but apply server hint if available
+            let localAvg = avg;
+            const currentTime = performance.now() / 1000.0;
+            if (serverBPMHint !== null && serverBPMHintTime !== null) {
+                const hintAge = currentTime - serverBPMHintTime;
+                if (hintAge < SERVER_BPM_HINT_MAX_AGE && serverBPMHint > 0) {
+                    // Use weighted average: favor local estimate but incorporate server hint
+                    hyperSmoothedBPM = (1 - SERVER_BPM_WEIGHT) * localAvg + SERVER_BPM_WEIGHT * serverBPMHint;
+                } else {
+                    // Server hint is stale, use local estimate
+                    hyperSmoothedBPM = localAvg;
+                }
+            } else {
+                // No server hint available, use local estimate
+                hyperSmoothedBPM = localAvg;
+            }
         }
         
         // Analyze dropped values for tempo change
@@ -348,6 +399,26 @@ const BPM_ESTIMATOR = (function() {
             return [...hyperSmoothedBPMHistory];
         },
 
+        // Set server BPM hint (from prediction server)
+        setServerBPMHint: function(bpm) {
+            if (bpm !== null && bpm > 0 && bpm < 300) {
+                serverBPMHint = bpm;
+                serverBPMHintTime = performance.now() / 1000.0;
+            }
+        },
+
+        // Get current server BPM hint
+        getServerBPMHint: function() {
+            const currentTime = performance.now() / 1000.0;
+            if (serverBPMHint !== null && serverBPMHintTime !== null) {
+                const hintAge = currentTime - serverBPMHintTime;
+                if (hintAge < SERVER_BPM_HINT_MAX_AGE) {
+                    return serverBPMHint;
+                }
+            }
+            return null;
+        },
+
         // Reset all state
         reset: function() {
             beatTimes = [];
@@ -361,6 +432,8 @@ const BPM_ESTIMATOR = (function() {
             hasLoggedSmoothedBPM = false;
             hasLoggedHyperSmoothedBPM = false;
             hyperSmoothedBPMHistory = [];
+            serverBPMHint = null;
+            serverBPMHintTime = null;
         }
     };
 })();

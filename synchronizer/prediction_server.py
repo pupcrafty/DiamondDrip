@@ -10,8 +10,12 @@ import sys
 import ssl
 import ipaddress
 import json
+import sqlite3
+import hashlib
 from datetime import datetime
 from pathlib import Path
+from contextlib import contextmanager
+from urllib.parse import parse_qs, urlparse
 
 PORT = 8444
 
@@ -137,6 +141,187 @@ def generate_self_signed_cert(cert_file, key_file):
         except (subprocess.CalledProcessError, FileNotFoundError):
             return False
 
+class PredictionDatabase:
+    """SQLite database for storing prediction data"""
+    
+    def __init__(self, db_path):
+        self.db_path = Path(db_path)
+        self.init_database()
+    
+    def init_database(self):
+        """Initialize the database schema"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS predictions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_timestamp TEXT NOT NULL,
+                    server_timestamp TEXT NOT NULL,
+                    current_bpm REAL,
+                    bpm_history TEXT,
+                    recent_pulse_patterns TEXT,
+                    recent_correct_prediction_parts TEXT,
+                    current_prediction TEXT,
+                    hashed_ip TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Add hashed_ip column if it doesn't exist (for existing databases)
+            try:
+                cursor.execute('ALTER TABLE predictions ADD COLUMN hashed_ip TEXT')
+            except sqlite3.OperationalError:
+                # Column already exists, ignore
+                pass
+            
+            # Create indexes for common queries
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_client_timestamp 
+                ON predictions(client_timestamp)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_server_timestamp 
+                ON predictions(server_timestamp)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_current_bpm 
+                ON predictions(current_bpm)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_created_at 
+                ON predictions(created_at)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_hashed_ip 
+                ON predictions(hashed_ip)
+            ''')
+            
+            conn.commit()
+    
+    @contextmanager
+    def get_connection(self):
+        """Get a database connection with proper error handling"""
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        conn.row_factory = sqlite3.Row  # Enable column access by name
+        try:
+            yield conn
+        except sqlite3.Error as e:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    
+    def insert_prediction(self, client_timestamp, server_timestamp, data, hashed_ip=None):
+        """Insert a prediction record into the database"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO predictions (
+                    client_timestamp, server_timestamp, current_bpm,
+                    bpm_history, recent_pulse_patterns,
+                    recent_correct_prediction_parts, current_prediction, hashed_ip
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                client_timestamp,
+                server_timestamp,
+                data.get('currentBPM'),
+                json.dumps(data.get('bpmHistory', [])),
+                json.dumps(data.get('recentPulsePatterns', [])),
+                json.dumps(data.get('recentCorrectPredictionParts', [])),
+                json.dumps(data.get('currentPrediction')),
+                hashed_ip
+            ))
+            conn.commit()
+            return cursor.lastrowid
+    
+    def get_recent_predictions(self, limit=100):
+        """Get recent predictions from the database"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM predictions
+                ORDER BY created_at DESC
+                LIMIT ?
+            ''', (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_average_bpm(self):
+        """Get the average BPM from all stored predictions"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT AVG(current_bpm) as avg_bpm
+                FROM predictions
+                WHERE current_bpm IS NOT NULL
+            ''')
+            result = cursor.fetchone()
+            return result['avg_bpm'] if result and result['avg_bpm'] is not None else None
+    
+    def get_average_bpm_last_20_seconds(self):
+        """Get the average BPM from predictions in the last 20 seconds"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # Query using created_at field with SQLite datetime functions
+            cursor.execute('''
+                SELECT AVG(current_bpm) as avg_bpm, COUNT(*) as count
+                FROM predictions
+                WHERE current_bpm IS NOT NULL
+                AND created_at >= datetime('now', '-20 seconds')
+            ''')
+            result = cursor.fetchone()
+            avg_bpm = result['avg_bpm'] if result and result['avg_bpm'] is not None else None
+            count = result['count'] if result else 0
+            return avg_bpm, count
+    
+    def get_unique_sources_last_20_seconds(self):
+        """Get the number of unique data sources in the last 20 seconds"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COUNT(DISTINCT hashed_ip) as unique_sources
+                FROM predictions
+                WHERE hashed_ip IS NOT NULL
+                AND created_at >= datetime('now', '-20 seconds')
+            ''')
+            result = cursor.fetchone()
+            return result['unique_sources'] if result else 0
+    
+    def get_statistics(self):
+        """Get basic statistics about stored predictions"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) as count FROM predictions')
+            count = cursor.fetchone()['count']
+            
+            cursor.execute('''
+                SELECT 
+                    AVG(current_bpm) as avg_bpm,
+                    MIN(current_bpm) as min_bpm,
+                    MAX(current_bpm) as max_bpm
+                FROM predictions
+                WHERE current_bpm IS NOT NULL
+            ''')
+            stats = dict(cursor.fetchone())
+            
+            # Count unique data sources (unique hashed IPs)
+            cursor.execute('''
+                SELECT COUNT(DISTINCT hashed_ip) as unique_sources
+                FROM predictions
+                WHERE hashed_ip IS NOT NULL
+            ''')
+            unique_sources = cursor.fetchone()['unique_sources']
+            
+            return {
+                'total_predictions': count,
+                'avg_bpm': stats['avg_bpm'],
+                'min_bpm': stats['min_bpm'],
+                'max_bpm': stats['max_bpm'],
+                'unique_data_sources': unique_sources
+            }
+
+# Global database instance
+db = None
+
 def get_ssl_context():
     """Get SSL context, using player certificate if available, otherwise generating one"""
     script_dir = Path(__file__).parent
@@ -190,21 +375,76 @@ class PredictionRequestHandler(http.server.SimpleHTTPRequestHandler):
                 # Parse JSON
                 data = json.loads(body.decode('utf-8'))
                 
-                # Log the prediction data (you can modify this to save to file, database, etc.)
-                timestamp = datetime.now().isoformat()
-                print(f"[{timestamp}] Received prediction data:")
-                print(f"  - Hyper Smoothed BPM History: {len(data.get('bpmHistory', []))} samples")
-                print(f"  - Recent Pulse Patterns: {len(data.get('recentPulsePatterns', []))} patterns")
-                print(f"  - Recent Correct Prediction Parts: {len(data.get('recentCorrectPredictionParts', []))} patterns")
-                print(f"  - Current Prediction: {data.get('currentPrediction') is not None}")
-                print(f"  - Current BPM: {data.get('currentBPM')}")
+                # Store in database first
+                server_timestamp = datetime.now().isoformat()
+                client_timestamp = data.get('timestamp', 'not provided')
+                avg_bpm_last_20s = None
                 
-                # Send success response
+                # Get client IP and extract device/browser info from User-Agent
+                client_address = self.client_address[0] if self.client_address else 'unknown'
+                user_agent = self.headers.get('User-Agent', 'unknown')
+                
+                # Extract device type and browser from User-Agent
+                device_type = 'unknown'
+                browser = 'unknown'
+                
+                user_agent_lower = user_agent.lower()
+                
+                # Detect device type
+                if 'mobile' in user_agent_lower or 'android' in user_agent_lower or 'iphone' in user_agent_lower or 'ipod' in user_agent_lower:
+                    device_type = 'mobile'
+                elif 'tablet' in user_agent_lower or 'ipad' in user_agent_lower:
+                    device_type = 'tablet'
+                elif 'tv' in user_agent_lower or 'smart-tv' in user_agent_lower:
+                    device_type = 'tv'
+                else:
+                    device_type = 'desktop'
+                
+                # Detect browser
+                if 'chrome' in user_agent_lower and 'edg' not in user_agent_lower:
+                    browser = 'chrome'
+                elif 'firefox' in user_agent_lower:
+                    browser = 'firefox'
+                elif 'safari' in user_agent_lower and 'chrome' not in user_agent_lower:
+                    browser = 'safari'
+                elif 'edg' in user_agent_lower:
+                    browser = 'edge'
+                elif 'opera' in user_agent_lower or 'opr' in user_agent_lower:
+                    browser = 'opera'
+                elif 'msie' in user_agent_lower or 'trident' in user_agent_lower:
+                    browser = 'ie'
+                
+                # Hash IP with device type and browser as salt
+                salt_string = f"{client_address}:{device_type}:{browser}"
+                hashed_ip = hashlib.sha256(salt_string.encode('utf-8')).hexdigest()
+                
+                if db is not None:
+                    try:
+                        db.insert_prediction(client_timestamp, server_timestamp, data, hashed_ip)
+                        # Get average BPM from predictions in the last 20 seconds
+                        avg_bpm_last_20s, count = db.get_average_bpm_last_20_seconds()
+                        unique_sources = db.get_unique_sources_last_20_seconds()
+                        if avg_bpm_last_20s is not None:
+                            print(f"[{server_timestamp}] Average BPM (last 20s): {avg_bpm_last_20s:.2f} (from {count} predictions, {unique_sources} unique sources)")
+                        else:
+                            print(f"[{server_timestamp}] No BPM data available for last 20 seconds ({unique_sources} unique sources)")
+                    except Exception as e:
+                        print(f"[{server_timestamp}] Warning: Failed to store in database: {e}")
+                else:
+                    # Database not available, just log timestamp
+                    print(f"[{server_timestamp}] Received prediction (database not available)")
+                
+                # Send success response with average BPM for last 20 seconds
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
-                response = {'status': 'success', 'timestamp': timestamp}
+                response = {
+                    'status': 'success',
+                    'server_timestamp': server_timestamp,
+                    'client_timestamp': client_timestamp,
+                    'avg_bpm_last_20s': round(avg_bpm_last_20s, 2) if avg_bpm_last_20s is not None else None
+                }
                 self.wfile.write(json.dumps(response).encode('utf-8'))
                 
             except json.JSONDecodeError as e:
@@ -233,11 +473,104 @@ class PredictionRequestHandler(http.server.SimpleHTTPRequestHandler):
             response = {'status': 'error', 'message': 'Not found'}
             self.wfile.write(json.dumps(response).encode('utf-8'))
     
+    def do_GET(self):
+        """Handle GET requests for statistics and recent predictions"""
+        global db
+        
+        if self.path == '/' or self.path == '/index.html' or self.path == '/viewer.html':
+            # Serve the viewer HTML page
+            try:
+                script_dir = Path(__file__).parent
+                viewer_path = script_dir / "viewer.html"
+                if viewer_path.exists():
+                    with open(viewer_path, 'rb') as f:
+                        content = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(content)
+                else:
+                    self.send_response(404)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(b'Viewer not found')
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f'Error serving viewer: {e}'.encode('utf-8'))
+        elif self.path == '/stats' or self.path == '/stats/':
+            # Return statistics
+            if db is not None:
+                try:
+                    stats = db.get_statistics()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(stats, indent=2).encode('utf-8'))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    response = {'status': 'error', 'message': str(e)}
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+            else:
+                self.send_response(503)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                response = {'status': 'error', 'message': 'Database not initialized'}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+        elif self.path == '/recent' or self.path.startswith('/recent?'):
+            # Return recent predictions
+            limit = 100
+            if '?' in self.path:
+                try:
+                    query_params = parse_qs(urlparse(self.path).query)
+                    if 'limit' in query_params:
+                        limit = int(query_params['limit'][0])
+                except (ValueError, KeyError):
+                    pass
+            
+            if db is not None:
+                try:
+                    predictions = db.get_recent_predictions(limit=limit)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(predictions, indent=2).encode('utf-8'))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    response = {'status': 'error', 'message': str(e)}
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+            else:
+                self.send_response(503)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                response = {'status': 'error', 'message': 'Database not initialized'}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+        else:
+            # 404 for other paths
+            self.send_response(404)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            response = {'status': 'error', 'message': 'Not found'}
+            self.wfile.write(json.dumps(response).encode('utf-8'))
+    
     def do_OPTIONS(self):
         """Handle CORS preflight requests"""
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
     
@@ -248,6 +581,8 @@ class PredictionRequestHandler(http.server.SimpleHTTPRequestHandler):
             super().log_message(format, *args)
 
 def main():
+    global db
+    
     # Get local IP
     local_ip = get_local_ip()
     
@@ -256,11 +591,27 @@ def main():
     print("=" * 60)
     print(f"\nServer starting on port {PORT}...")
     
+    # Initialize database
+    script_dir = Path(__file__).parent
+    db_path = script_dir / "predictions.db"
+    try:
+        db = PredictionDatabase(db_path)
+        print(f"✓ Database initialized: {db_path}")
+    except Exception as e:
+        print(f"✗ Warning: Failed to initialize database: {e}")
+        print("  Server will continue without database storage.")
+        db = None
+    
     # Get SSL context
     ssl_context = get_ssl_context()
     
     print(f"\nLocal access:  https://localhost:{PORT}/prediction")
     print(f"Network access: https://{local_ip}:{PORT}/prediction")
+    if db is not None:
+        print(f"\nDatabase endpoints:")
+        print(f"  - Viewer: https://localhost:{PORT}/")
+        print(f"  - Statistics: https://localhost:{PORT}/stats")
+        print(f"  - Recent predictions: https://localhost:{PORT}/recent?limit=100")
     print("\nNote: You may see a security warning because this uses a")
     print("self-signed certificate. This is normal for development.")
     print("Click 'Advanced' → 'Proceed to site' (or similar) to continue.")

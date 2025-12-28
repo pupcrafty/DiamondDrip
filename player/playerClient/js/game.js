@@ -109,17 +109,33 @@ async function sendPredictionData() {
             recentPulsePatterns: recentPulsePatterns,
             recentCorrectPredictionParts: recentCorrectPredictionParts,
             currentPrediction: hyperPrediction,
-            timestamp: now()
+            timestamp: new Date().toISOString()
         };
         
-        // Send asynchronously (fire and forget)
+        // Send asynchronously and process response for BPM hint
         fetch(PREDICTION_SERVER_URL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(payload)
-        }).catch(error => {
+        })
+        .then(response => {
+            if (!response.ok) {
+                return null;
+            }
+            return response.json();
+        })
+        .then(data => {
+            // Extract average BPM from server response and feed it to the BPM estimator
+            if (data && data.avg_bpm_last_20s !== null && data.avg_bpm_last_20s !== undefined) {
+                const serverBPM = data.avg_bpm_last_20s;
+                if (serverBPM > 0 && serverBPM < 300) {
+                    BPM_ESTIMATOR.setServerBPMHint(serverBPM);
+                }
+            }
+        })
+        .catch(error => {
             // Silently ignore errors - don't block game execution
             // Uncomment for debugging:
             // console.warn('Failed to send prediction data:', error);

@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prediction Database Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        
+        h1 {
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .controls button, .controls input, .controls label {
+            padding: 8px 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        
+        .controls button {
+            background: #3498db;
+            color: white;
+            border: none;
+        }
+        
+        .controls button:hover {
+            background: #2980b9;
+        }
+        
+        .controls button.active {
+            background: #27ae60;
+        }
+        
+        .controls input[type="number"] {
+            width: 80px;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .stat-card h3 {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-bottom: 8px;
+            font-weight: 400;
+        }
+        
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: bold;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .status.error {
+            background: #fee;
+            color: #c33;
+            border: 1px solid #fcc;
+        }
+        
+        .status.success {
+            background: #efe;
+            color: #3c3;
+            border: 1px solid #cfc;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            cursor: pointer;
+        }
+        
+        th:hover {
+            background: #e9ecef;
+        }
+        
+        tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .json-field {
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        
+        .json-field.expanded {
+            white-space: pre-wrap;
+            max-width: none;
+            word-break: break-all;
+        }
+        
+        .json-toggle {
+            color: #3498db;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+        
+        .timestamp {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        
+        .bpm {
+            font-weight: 600;
+            color: #27ae60;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Prediction Database Viewer</h1>
+        
+        <div class="controls">
+            <button id="refreshBtn">Refresh</button>
+            <button id="autoRefreshBtn">Auto-refresh: OFF</button>
+            <label>
+                Limit: <input type="number" id="limitInput" value="100" min="1" max="1000">
+            </label>
+        </div>
+        
+        <div id="status" class="status"></div>
+        
+        <div id="stats" class="stats"></div>
+        
+        <div id="tableContainer">
+            <div class="loading">Loading data...</div>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = window.location.origin;
+        let autoRefreshInterval = null;
+        let currentLimit = 100;
+        
+        function showStatus(message, isError = false) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status ' + (isError ? 'error' : 'success');
+            status.style.display = 'block';
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 3000);
+        }
+        
+        function formatJSON(str) {
+            try {
+                const obj = JSON.parse(str);
+                return JSON.stringify(obj, null, 2);
+            } catch {
+                return str;
+            }
+        }
+        
+        function formatTimestamp(ts) {
+            if (!ts) return '-';
+            try {
+                const date = new Date(ts);
+                return date.toLocaleString();
+            } catch {
+                return ts;
+            }
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function escapeHtmlAttr(text) {
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+        
+        async function fetchStats() {
+            try {
+                const response = await fetch(`${API_BASE}/stats`);
+                if (!response.ok) throw new Error('Failed to fetch stats');
+                const stats = await response.json();
+                displayStats(stats);
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+                document.getElementById('stats').innerHTML = '<div class="stat-card"><h3>Error</h3><div class="value">Failed to load</div></div>';
+            }
+        }
+        
+        function displayStats(stats) {
+            const statsContainer = document.getElementById('stats');
+            statsContainer.innerHTML = `
+                <div class="stat-card">
+                    <h3>Total Predictions</h3>
+                    <div class="value">${stats.total_predictions || 0}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Average BPM</h3>
+                    <div class="value">${stats.avg_bpm ? stats.avg_bpm.toFixed(2) : 'N/A'}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Min BPM</h3>
+                    <div class="value">${stats.min_bpm ? stats.min_bpm.toFixed(2) : 'N/A'}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Max BPM</h3>
+                    <div class="value">${stats.max_bpm ? stats.max_bpm.toFixed(2) : 'N/A'}</div>
+                </div>
+            `;
+        }
+        
+        async function fetchPredictions(limit = 100) {
+            try {
+                const response = await fetch(`${API_BASE}/recent?limit=${limit}`);
+                if (!response.ok) throw new Error('Failed to fetch predictions');
+                const predictions = await response.json();
+                displayPredictions(predictions);
+                showStatus(`Loaded ${predictions.length} predictions`);
+            } catch (error) {
+                console.error('Error fetching predictions:', error);
+                document.getElementById('tableContainer').innerHTML = 
+                    '<div class="status error">Failed to load predictions: ' + error.message + '</div>';
+                showStatus('Error loading predictions', true);
+            }
+        }
+        
+        function displayPredictions(predictions) {
+            const container = document.getElementById('tableContainer');
+            
+            if (predictions.length === 0) {
+                container.innerHTML = '<div class="loading">No predictions found</div>';
+                return;
+            }
+            
+            let html = '<table><thead><tr>';
+            html += '<th>ID</th>';
+            html += '<th>Client Timestamp</th>';
+            html += '<th>Server Timestamp</th>';
+            html += '<th>BPM</th>';
+            html += '<th>BPM History</th>';
+            html += '<th>Current Prediction</th>';
+            html += '<th>Created At</th>';
+            html += '</tr></thead><tbody>';
+            
+            predictions.forEach((pred, index) => {
+                const bpmHistoryJson = pred.bpm_history ? formatJSON(pred.bpm_history) : '-';
+                const currentPredJson = pred.current_prediction ? formatJSON(pred.current_prediction) : '-';
+                const bpmHistoryShort = bpmHistoryJson.length > 50 ? bpmHistoryJson.substring(0, 50) + '...' : bpmHistoryJson;
+                const currentPredShort = currentPredJson.length > 50 ? currentPredJson.substring(0, 50) + '...' : currentPredJson;
+                
+                html += '<tr>';
+                html += `<td>${pred.id}</td>`;
+                html += `<td class="timestamp">${formatTimestamp(pred.client_timestamp)}</td>`;
+                html += `<td class="timestamp">${formatTimestamp(pred.server_timestamp)}</td>`;
+                html += `<td class="bpm">${pred.current_bpm ? pred.current_bpm.toFixed(2) : '-'}</td>`;
+                if (pred.bpm_history && bpmHistoryJson.length > 50) {
+                    html += `<td class="json-field" data-full="${escapeHtmlAttr(bpmHistoryJson)}">${escapeHtml(bpmHistoryShort)}<span class="json-toggle" onclick="toggleJSON(this)"> [show]</span></td>`;
+                } else {
+                    html += `<td class="json-field">${escapeHtml(bpmHistoryJson)}</td>`;
+                }
+                if (pred.current_prediction && currentPredJson.length > 50) {
+                    html += `<td class="json-field" data-full="${escapeHtmlAttr(currentPredJson)}">${escapeHtml(currentPredShort)}<span class="json-toggle" onclick="toggleJSON(this)"> [show]</span></td>`;
+                } else {
+                    html += `<td class="json-field">${escapeHtml(currentPredJson)}</td>`;
+                }
+                html += `<td class="timestamp">${formatTimestamp(pred.created_at)}</td>`;
+                html += '</tr>';
+            });
+            
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+        
+        function toggleJSON(el) {
+            const field = el.parentElement;
+            const isExpanded = field.classList.contains('expanded');
+            // Browser automatically decodes HTML entities in attribute values
+            const fullText = field.getAttribute('data-full');
+            
+            if (isExpanded) {
+                field.classList.remove('expanded');
+                const shortText = fullText.length > 50 ? fullText.substring(0, 50) + '...' : fullText;
+                field.innerHTML = escapeHtml(shortText) + '<span class="json-toggle" onclick="toggleJSON(this)"> [show]</span>';
+            } else {
+                field.classList.add('expanded');
+                const formattedText = escapeHtml(fullText).replace(/\n/g, '<br>');
+                field.innerHTML = formattedText + '<span class="json-toggle" onclick="toggleJSON(this)"> [hide]</span>';
+            }
+        }
+        
+        async function loadData() {
+            await Promise.all([
+                fetchStats(),
+                fetchPredictions(currentLimit)
+            ]);
+        }
+        
+        function toggleAutoRefresh() {
+            const btn = document.getElementById('autoRefreshBtn');
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+                btn.textContent = 'Auto-refresh: OFF';
+                btn.classList.remove('active');
+            } else {
+                autoRefreshInterval = setInterval(loadData, 5000);
+                btn.textContent = 'Auto-refresh: ON (5s)';
+                btn.classList.add('active');
+            }
+        }
+        
+        // Event listeners
+        document.getElementById('refreshBtn').addEventListener('click', loadData);
+        document.getElementById('autoRefreshBtn').addEventListener('click', toggleAutoRefresh);
+        document.getElementById('limitInput').addEventListener('change', (e) => {
+            currentLimit = parseInt(e.target.value) || 100;
+            fetchPredictions(currentLimit);
+        });
+        
+        // Initial load
+        loadData();
+        
+        // Make toggleJSON available globally
+        window.toggleJSON = toggleJSON;
+    </script>
+</body>
+</html>
+
