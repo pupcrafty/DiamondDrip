@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Detector Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            background-color: #121218;
+            color: #e0e0e0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #80b0ff;
+            margin-bottom: 10px;
+        }
+        .metric-card {
+            background-color: #1a1a24;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            margin-bottom: 20px;
+        }
+        .metric-label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        .metric-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #ff66aa;
+        }
+        .pattern-section {
+            background-color: #1a1a24;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #333;
+        }
+        .pattern-section h2 {
+            margin-top: 0;
+            color: #80b0ff;
+            font-size: 18px;
+        }
+        .pattern-grid {
+            display: flex;
+            gap: 2px;
+            align-items: center;
+            flex-wrap: wrap;
+            background-color: #0a0a12;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .pattern-slot {
+            width: 18px;
+            height: 40px;
+            background-color: #222;
+            border: 1px solid #333;
+            border-radius: 2px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            color: #666;
+        }
+        .pattern-slot.active {
+            background-color: #44ff44;
+            color: #000;
+        }
+        .pattern-slot.beat-start {
+            border-color: #555;
+        }
+        .pattern-slot.beat-start.active {
+            background-color: #44cc44;
+        }
+        .pattern-list {
+            margin-top: 15px;
+        }
+        .pattern-item {
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #0a0a12;
+            border-radius: 4px;
+        }
+        .pattern-item-label {
+            color: #888;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 Simple Detector Test</h1>
+        
+        <div class="metric-card">
+            <div class="metric-label">Hyper-Smoothed BPM</div>
+            <div class="metric-value" id="hyperBpmValue">-</div>
+        </div>
+
+        <div class="pattern-section">
+            <h2>Current Phrase Pattern</h2>
+            <div class="pattern-grid" id="currentPattern"></div>
+        </div>
+
+        <div class="pattern-section">
+            <h2>Hyper Predicted Phrase Pattern</h2>
+            <div class="pattern-grid" id="hyperPredictedPattern"></div>
+        </div>
+
+        <div class="pattern-section">
+            <h2>Predicted from History Phrases</h2>
+            <div class="pattern-grid" id="predictedFromHistoryPattern"></div>
+        </div>
+
+        <div class="pattern-section">
+            <h2>Predicted from Correct Patterns</h2>
+            <div class="pattern-grid" id="predictedFromCorrectPattern"></div>
+        </div>
+
+        <div class="pattern-section">
+            <h2>Recent Phrase Patterns</h2>
+            <div class="pattern-list" id="recentPatterns"></div>
+        </div>
+
+        <div class="pattern-section">
+            <h2>Correct Prediction Patterns</h2>
+            <div class="pattern-list" id="correctPatterns"></div>
+        </div>
+    </div>
+
+    <script src="bpmEstimator.js"></script>
+    <script src="energyClassifier.js"></script>
+    <script src="rhythmPredictor.js"></script>
+    <script src="simpleDetectorTest.js"></script>
+</body>
+</html>
+
