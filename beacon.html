@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rhythm Beacon</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Courier New', monospace;
+            background-color: #121218;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+        h1 {
+            color: #80b0ff;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 20px;
+        }
+        button:hover {
+            background-color: #5aa0f2;
+        }
+        button:disabled {
+            background-color: #444;
+            cursor: not-allowed;
+        }
+        .status-box {
+            background-color: #1a1a24;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            margin-bottom: 20px;
+            min-height: 60px;
+        }
+        .status-text {
+            color: #aaa;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        canvas {
+            border: 2px solid #333;
+            border-radius: 8px;
+            background-color: #0a0a12;
+            display: block;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 Rhythm Beacon</h1>
+        
+        <div style="text-align: center; margin-bottom: 20px;">
+            <button id="startBtn">Start Listening</button>
+            <button id="stopBtn" disabled>Stop Listening</button>
+        </div>
+
+        <div class="status-box">
+            <div class="status-text" id="statusText">Click "Start Listening" to begin. You'll be asked for microphone permission.</div>
+        </div>
+
+        <canvas id="beaconCanvas" width="400" height="400"></canvas>
+    </div>
+
+    <script src="logger.js"></script>
+    <script src="beatDetection.js"></script>
+    <script src="bpmEstimator.js"></script>
+    <script src="energyClassifier.js"></script>
+    <script src="rhythmPredictor.js"></script>
+    <script src="beacon.js"></script>
+</body>
+</html>
+

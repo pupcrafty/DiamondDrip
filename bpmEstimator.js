@@ -19,6 +19,8 @@ const BPM_ESTIMATOR = (function() {
     let acceptedBpmCount = 0; // Count of accepted BPM values
     let droppedBpmCount = 0; // Count of dropped BPM values
     let tempoChangeDetected = false; // Flag for tempo change detection
+    let hasLoggedSmoothedBPM = false; // Track if we've logged first smoothed BPM
+    let hasLoggedHyperSmoothedBPM = false; // Track if we've logged first hyper-smoothed BPM
 
     function calculateBPM() {
         if (beatTimes.length < MIN_BEATS_FOR_BPM) {
@@ -61,11 +63,20 @@ const BPM_ESTIMATOR = (function() {
         // Calculate BPM from median interval
         let rawBPM = 60.0 / medianFiltered;
         
+        // If BPM exceeds MAX_BPM_BEFORE_HALVING, assume double counting and halve it
+        if (rawBPM > MAX_BPM_BEFORE_HALVING) {
+            rawBPM = rawBPM / 2;
+        }
+        
         // Smooth the BPM estimate using exponential moving average
         // This makes it less sensitive to sudden changes
         const smoothingFactor = 0.3; // Lower = more smoothing, less responsive
         if (smoothedBPM === null) {
             smoothedBPM = rawBPM;
+            if (!hasLoggedSmoothedBPM) {
+                log('BPM', '🎯 [BPM CALCULATION] First smoothed BPM calculated:', smoothedBPM.toFixed(1));
+                hasLoggedSmoothedBPM = true;
+            }
         } else {
             // Only update if the change is reasonable (within 20% of current estimate)
             // This prevents sudden jumps from outlier calculations
@@ -94,6 +105,14 @@ const BPM_ESTIMATOR = (function() {
             bpmSamples.push(newSample);
             const avg = bpmSamples.reduce((a, b) => a + b, 0) / bpmSamples.length;
             hyperSmoothedBPM = avg;
+            // If BPM exceeds MAX_BPM_BEFORE_HALVING, assume double counting and halve it
+            if (hyperSmoothedBPM > MAX_BPM_BEFORE_HALVING) {
+                hyperSmoothedBPM = hyperSmoothedBPM / 2;
+            }
+            if (!hasLoggedHyperSmoothedBPM && bpmSamples.length >= 2) {
+                log('BPM', '🎯 [BPM CALCULATION] First hyper-smoothed BPM calculated:', hyperSmoothedBPM.toFixed(1));
+                hasLoggedHyperSmoothedBPM = true;
+            }
             return;
         }
         
@@ -120,6 +139,14 @@ const BPM_ESTIMATOR = (function() {
             acceptedBpmCount++;
             // Update hyperSmoothedBPM to average of kept samples
             hyperSmoothedBPM = bpmSamples.reduce((a, b) => a + b, 0) / bpmSamples.length;
+            // If BPM exceeds MAX_BPM_BEFORE_HALVING, assume double counting and halve it
+            if (hyperSmoothedBPM > MAX_BPM_BEFORE_HALVING) {
+                hyperSmoothedBPM = hyperSmoothedBPM / 2;
+            }
+            if (!hasLoggedHyperSmoothedBPM) {
+                log('BPM', '🎯 [BPM CALCULATION] First hyper-smoothed BPM calculated:', hyperSmoothedBPM.toFixed(1));
+                hasLoggedHyperSmoothedBPM = true;
+            }
         } else {
             // Drop the value - add to dropped array, don't add to samples
             droppedBpmValues.push(newSample);
@@ -230,6 +257,11 @@ const BPM_ESTIMATOR = (function() {
             // Update hyperSmoothedBPM to the new tempo
             hyperSmoothedBPM = bpmSamples.reduce((a, b) => a + b, 0) / bpmSamples.length;
             
+            // If BPM exceeds MAX_BPM_BEFORE_HALVING, assume double counting and halve it
+            if (hyperSmoothedBPM > MAX_BPM_BEFORE_HALVING) {
+                hyperSmoothedBPM = hyperSmoothedBPM / 2;
+            }
+            
             // Reset counters since we've adapted to the new tempo
             acceptedBpmCount = bpmSamples.length;
             droppedBpmCount = 0;
@@ -237,7 +269,7 @@ const BPM_ESTIMATOR = (function() {
             // Clear or reduce dropped values since we've used them
             droppedBpmValues = [];
             
-            console.log(`Tempo change detected! New BPM: ${hyperSmoothedBPM.toFixed(1)}, using ${bpmSamples.length} samples from dropped values`);
+            log('BPM', `Tempo change detected! New BPM: ${hyperSmoothedBPM.toFixed(1)}, using ${bpmSamples.length} samples from dropped values`);
         }
     }
 
@@ -271,11 +303,15 @@ const BPM_ESTIMATOR = (function() {
 
         // Get current BPM values
         getSmoothedBPM: function() {
-            return smoothedBPM;
+            if (smoothedBPM === null) return null;
+            // If BPM exceeds MAX_BPM_BEFORE_HALVING, assume double counting and halve it
+            return smoothedBPM > MAX_BPM_BEFORE_HALVING ? smoothedBPM / 2 : smoothedBPM;
         },
 
         getHyperSmoothedBPM: function() {
-            return hyperSmoothedBPM;
+            if (hyperSmoothedBPM === null) return null;
+            // If BPM exceeds MAX_BPM_BEFORE_HALVING, assume double counting and halve it
+            return hyperSmoothedBPM > MAX_BPM_BEFORE_HALVING ? hyperSmoothedBPM / 2 : hyperSmoothedBPM;
         },
 
         isTempoChangeDetected: function() {
@@ -300,6 +336,8 @@ const BPM_ESTIMATOR = (function() {
             acceptedBpmCount = 0;
             droppedBpmCount = 0;
             tempoChangeDetected = false;
+            hasLoggedSmoothedBPM = false;
+            hasLoggedHyperSmoothedBPM = false;
         }
     };
 })();

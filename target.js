@@ -2,13 +2,15 @@
 // Target class
 // -----------------------------
 class Target {
-    constructor(beatNumber, x, y) {
+    constructor(beatNumber, x, y, color = null) {
         this.beatSpawn = beatNumber;  // Beat number when target appeared
         this.beatDisappear = beatNumber + TARGET_LIFETIME_BEATS;  // Beat number when target should disappear
         this.x = x;
         this.y = y;
         this.hit = false;  // Whether this target has been hit
-        this.marker = null;  // Reference to the marker moving toward this target
+        this.markers = [];  // Array of markers moving toward this target
+        this.color = color || 'rgb(80, 150, 255)';  // Target color
+        this.score = 0;  // Running score for this target (0-5+, resets at 5)
     }
     
     shouldDisappear(beatNumber) {
@@ -37,7 +39,7 @@ class Target {
         return distance <= MARKER_RADIUS + targetRadius;
     }
     
-    score(markerX, markerY) {
+    getHitResult(markerX, markerY) {
         // Position-based scoring: check from inner to outer circles
         // Define circle radii
         const blueRadius = TARGET_RADIUS;  // 28

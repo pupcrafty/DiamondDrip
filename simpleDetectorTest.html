@@ -95,11 +95,34 @@
             font-size: 12px;
             margin-bottom: 5px;
         }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background-color: #5aa0f2;
+        }
+        button:disabled {
+            background-color: #444;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🎵 Simple Detector Test</h1>
+        
+        <div style="margin-bottom: 20px;">
+            <button id="startBtn">Start Detection</button>
+            <button id="stopBtn" disabled>Stop Detection</button>
+        </div>
         
         <div class="metric-card">
             <div class="metric-label">Hyper-Smoothed BPM</div>
@@ -137,6 +160,8 @@
         </div>
     </div>
 
+    <script src="logger.js"></script>
+    <script src="beatDetection.js"></script>
     <script src="bpmEstimator.js"></script>
     <script src="energyClassifier.js"></script>
     <script src="rhythmPredictor.js"></script>

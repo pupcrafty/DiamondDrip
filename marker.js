@@ -2,26 +2,26 @@
 // Marker class
 // -----------------------------
 class Marker {
-    constructor(target, tSpawn, tArrival) {
+    constructor(target, tSpawn, tArrival, topX, topY, holdDuration, fallVx, fallVy) {
         this.target = target;  // Reference to the target this marker is moving toward
         this.tSpawn = tSpawn;  // Time when marker spawns
         this.tArrival = tArrival;  // Time when marker should arrive at target center
         
-        // Calculate spawn position (off-screen, random edge)
-        const [spawnX, spawnY] = randomSpawnPosition(target.x, target.y);
-        this.spawnX = spawnX;
-        this.spawnY = spawnY;
+        // Top position where marker holds before falling
+        this.topX = topX;
+        this.topY = topY;
         
-        // Current position (starts at spawn position)
-        this.x = spawnX;
-        this.y = spawnY;
+        // Hold phase
+        this.holdDuration = holdDuration;  // Time to hold at top before falling
+        this.tStartFall = tSpawn + holdDuration;  // Time when falling starts
         
-        // Calculate velocity to arrive at target center at exact right time
-        const travelTime = tArrival - tSpawn;
-        const dx = target.x - spawnX;
-        const dy = target.y - spawnY;
-        this.vx = dx / travelTime;
-        this.vy = dy / travelTime;
+        // Fall velocity (calculated to hit target at tArrival)
+        this.fallVx = fallVx;
+        this.fallVy = fallVy;
+        
+        // Current position (starts at top position)
+        this.x = topX;
+        this.y = topY;
         
         this.hit = false;  // Whether this marker's target has been hit
     }
@@ -29,10 +29,16 @@ class Marker {
     update(t) {
         if (this.hit) return;  // Don't update if target is already hit
         
-        // Calculate position based on velocity
-        const elapsed = t - this.tSpawn;
-        this.x = this.spawnX + this.vx * elapsed;
-        this.y = this.spawnY + this.vy * elapsed;
+        if (t < this.tStartFall) {
+            // Hold phase: stay at top position
+            this.x = this.topX;
+            this.y = this.topY;
+        } else {
+            // Fall phase: move toward target
+            const fallElapsed = t - this.tStartFall;
+            this.x = this.topX + this.fallVx * fallElapsed;
+            this.y = this.topY + this.fallVy * fallElapsed;
+        }
     }
     
     hasLeftYellowCircle() {
@@ -44,16 +50,16 @@ class Marker {
         const dy = this.y - this.target.y;
         const distanceFromTarget = Math.sqrt(dx * dx + dy * dy);
         
-        // Vector from spawn to target
-        const toTargetX = this.target.x - this.spawnX;
-        const toTargetY = this.target.y - this.spawnY;
+        // Vector from top position to target
+        const toTargetX = this.target.x - this.topX;
+        const toTargetY = this.target.y - this.topY;
         
         // Vector from current position to target
         const fromCurrentToTargetX = this.target.x - this.x;
         const fromCurrentToTargetY = this.target.y - this.y;
         
         // Check if marker has passed the target center:
-        // If the dot product of (spawn->target) and (current->target) is negative,
+        // If the dot product of (top->target) and (current->target) is negative,
         // it means we're on the opposite side of the target from where we started
         const dotProduct = toTargetX * fromCurrentToTargetX + toTargetY * fromCurrentToTargetY;
         const hasPassedTarget = dotProduct < 0;

@@ -19,6 +19,8 @@ const ENERGY_CLASSIFIER = (function() {
     let lastClusterUpdateTime = 0;
     let temporalRmsAverage = null; // Local temporal average of RMS for classification
     let pulseThreshold = null; // Threshold for detecting pulses (based on energy level averages)
+    let hasLoggedEnergyClusters = false; // Track if we've logged first energy clusters
+    let hasLoggedEnergyLevel = false; // Track if we've logged first energy level classification
 
     function updateEnergyClusters() {
         if (rmsSamples.length < 50) {
@@ -75,6 +77,10 @@ const ENERGY_CLASSIFIER = (function() {
         // Sort cluster centers so energy levels are ordered from low to high
         centers.sort((a, b) => a - b);
         energyLevelAverages = centers;
+        if (!hasLoggedEnergyClusters) {
+            log('ENERGY', '⚡ [ENERGY LEVEL LISTENING] First energy level clusters calculated:', energyLevelAverages.map(v => v.toFixed(4)));
+            hasLoggedEnergyClusters = true;
+        }
     }
 
     function classifyEnergyLevel(temporalAvg) {
@@ -190,7 +196,14 @@ const ENERGY_CLASSIFIER = (function() {
             }
             
             // Classify current energy level using temporal average
+            const prevEnergyLevel = currentEnergyLevel;
             currentEnergyLevel = classifyEnergyLevel(temporalRmsAverage);
+            
+            // Log first energy level classification
+            if (!hasLoggedEnergyLevel && currentEnergyLevel > 0) {
+                log('ENERGY', '⚡ [ENERGY LEVEL LISTENING] First energy level classified:', currentEnergyLevel);
+                hasLoggedEnergyLevel = true;
+            }
             
             // Update pulse threshold dynamically based on current energy level averages
             // Use level 3 (medium) as the pulse threshold, but update it continuously
@@ -233,6 +246,8 @@ const ENERGY_CLASSIFIER = (function() {
             lastClusterUpdateTime = 0;
             temporalRmsAverage = null;
             pulseThreshold = null;
+            hasLoggedEnergyClusters = false;
+            hasLoggedEnergyLevel = false;
         }
     };
 })();

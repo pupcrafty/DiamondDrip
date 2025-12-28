@@ -21,6 +21,11 @@ const RHYTHM_PREDICTOR = (function() {
     let phraseCount = 0; // Total phrase count for pattern adjustment
     let predictionAccuracy = []; // Array of accuracy records for past phrases {correct: number, total: number, accuracy: number}
     let correctPredictionPatterns = []; // Store patterns that were correctly predicted for future use
+    let hasLoggedFirstPhrase = false; // Track if we've logged first phrase completion
+    let hasLoggedEnoughPhrases = false; // Track if we've logged when we have enough phrases for prediction
+    let hasLoggedInitialPrediction = false; // Track if we've logged first prediction from history phrases
+    let hasLoggedCorrectPatternPrediction = false; // Track if we've logged first prediction from correct patterns
+    let hasLoggedHyperPrediction = false; // Track if we've logged first hyper prediction
 
     function applyEighthBeatPreference(pattern) {
         // For non-8th beat slots, check if nearby 8th beats are active
@@ -344,7 +349,7 @@ const RHYTHM_PREDICTOR = (function() {
     }
 
     function createHyperPrediction(pred1, pred2) {
-        // Hyper prediction: favor agreed-upon beats, then add additional beats from either prediction
+        // Hyper prediction: only include agreed-upon beats and any predictions ON the beat (8th beats)
         const hyperPred = new Array(PHRASE_BEATS * 8).fill(false);
         
         // Step 1: Include all beats that both predictions agree on (high confidence)
@@ -354,31 +359,17 @@ const RHYTHM_PREDICTOR = (function() {
             }
         }
         
-        // Step 2: Add additional beats from either prediction (but favor 8th beats)
+        // Step 2: Add any predictions that are ON the beat (8th beat positions) from either predictor
         for (let slot = 0; slot < hyperPred.length; slot++) {
             if (!hyperPred[slot]) { // Only consider slots not already included
                 const isEighthBeat = (slot % 4) === 0;
-                const pred1HasIt = pred1[slot];
-                const pred2HasIt = pred2[slot];
                 
-                // If either prediction has it, consider adding it
-                if (pred1HasIt || pred2HasIt) {
-                    // Favor 8th beats - always include if either prediction has it
-                    if (isEighthBeat && (pred1HasIt || pred2HasIt)) {
-                        hyperPred[slot] = true;
-                    }
-                    // For non-8th beats, only include if at least one prediction has it
-                    // (This is less strict to avoid too many false positives)
-                    else if (!isEighthBeat) {
-                        // Include if either prediction suggests it (but we're already favoring agreed beats)
-                        hyperPred[slot] = pred1HasIt || pred2HasIt;
-                    }
+                // Only include if it's on an 8th beat AND at least one prediction has it
+                if (isEighthBeat && (pred1[slot] || pred2[slot])) {
+                    hyperPred[slot] = true;
                 }
             }
         }
-        
-        // Apply 8th beat preference one more time to clean up
-        applyEighthBeatPreference(hyperPred);
         
         return hyperPred;
     }
@@ -396,12 +387,27 @@ const RHYTHM_PREDICTOR = (function() {
         const historyPhrases = phrasePatterns.slice(-Math.min(16, phrasePatterns.length));
         
         // PREDICTION 1: From history phrases
+        const prevPredictedFromHistory = predictedPhrasePattern;
         predictedPhrasePattern = predictFromHistoryPhrases(historyPhrases);
         
+        // Log first prediction from history phrases
+        if (!hasLoggedInitialPrediction && predictedPhrasePattern !== null && prevPredictedFromHistory === null) {
+            log('PREDICTION_INIT', '🔮 [INITIAL PREDICTION] First prediction from history phrases generated');
+            hasLoggedInitialPrediction = true;
+        }
+        
         // PREDICTION 2: From correct prediction patterns
+        const prevPredictedFromCorrect = predictedFromCorrectPatterns;
         predictedFromCorrectPatterns = predictFromCorrectPatterns();
         
+        // Log first prediction from correct patterns
+        if (!hasLoggedCorrectPatternPrediction && predictedFromCorrectPatterns !== null && prevPredictedFromCorrect === null) {
+            log('PREDICTION_INIT', '🔮 [INITIAL PREDICTION] First prediction from correct patterns generated');
+            hasLoggedCorrectPatternPrediction = true;
+        }
+        
         // HYPER PREDICTION: Combine both predictions
+        const prevHyperPrediction = hyperPredictedPhrasePattern;
         if (predictedPhrasePattern !== null && predictedFromCorrectPatterns !== null) {
             hyperPredictedPhrasePattern = createHyperPrediction(predictedPhrasePattern, predictedFromCorrectPatterns);
         } else if (predictedPhrasePattern !== null) {
@@ -410,6 +416,12 @@ const RHYTHM_PREDICTOR = (function() {
             hyperPredictedPhrasePattern = [...predictedFromCorrectPatterns];
         } else {
             hyperPredictedPhrasePattern = null;
+        }
+        
+        // Log first hyper prediction
+        if (!hasLoggedHyperPrediction && hyperPredictedPhrasePattern !== null && prevHyperPrediction === null) {
+            log('PREDICTION_HYPER', '🌟 [HYPER PREDICTION] First hyper prediction generated (combined from both sources)');
+            hasLoggedHyperPrediction = true;
         }
     }
 
@@ -458,6 +470,19 @@ const RHYTHM_PREDICTOR = (function() {
                     
                     phrasePatterns.push([...currentPhrasePattern]);
                     phraseCount++;
+                    
+                    // Log first phrase completion
+                    if (!hasLoggedFirstPhrase) {
+                        log('PULSE_PATTERN', '🎵 [PULSE PATTERN LISTENING] First phrase completed');
+                        hasLoggedFirstPhrase = true;
+                    }
+                    
+                    // Log when we have enough phrases for prediction
+                    if (!hasLoggedEnoughPhrases && phrasePatterns.length >= 4) {
+                        log('PULSE_PATTERN', '🎵 [PULSE PATTERN LISTENING] Enough phrases collected for prediction (4 phrases)');
+                        hasLoggedEnoughPhrases = true;
+                    }
+                    
                     if (phrasePatterns.length > MAX_PHRASES) {
                         phrasePatterns.shift();
                     }
@@ -524,6 +549,11 @@ const RHYTHM_PREDICTOR = (function() {
             phrasePatterns = [];
             phraseCount = 0;
             predictionAccuracy = [];
+            hasLoggedFirstPhrase = false;
+            hasLoggedEnoughPhrases = false;
+            hasLoggedInitialPrediction = false;
+            hasLoggedCorrectPatternPrediction = false;
+            hasLoggedHyperPrediction = false;
             correctPredictionPatterns = [];
         }
     };
