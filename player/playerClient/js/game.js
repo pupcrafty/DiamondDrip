@@ -71,6 +71,50 @@ function drawStar(ctx, x, y, outerRadius, innerRadius) {
 // -----------------------------
 const PREDICTION_SERVER_URL = 'https://localhost:8444/prediction';
 let lastPredictionSent = null; // Track last prediction sent to avoid duplicates
+let serverIP = null; // Cache the server IP
+let currentServerURL = PREDICTION_SERVER_URL; // Track current URL (may switch from localhost to IP)
+
+// Get server IP from current page hostname (if not localhost)
+function getServerIP() {
+    if (serverIP) {
+        return serverIP;
+    }
+    
+    const hostname = window.location.hostname;
+    
+    // If page was loaded from an IP address (not localhost), use that
+    if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+        // Check if it's a valid IP address
+        const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+        if (ipPattern.test(hostname)) {
+            serverIP = hostname;
+            return serverIP;
+        }
+        // If it's a hostname, use it as-is
+        serverIP = hostname;
+        return serverIP;
+    }
+    
+    return null;
+}
+
+// Replace localhost with server IP in a URL
+function replaceLocalhostWithIP(url) {
+    const serverIP = getServerIP();
+    if (serverIP && url.includes('localhost')) {
+        return url.replace(/localhost/g, serverIP);
+    }
+    return url;
+}
+
+// Get the best URL to use (IP if available, otherwise original)
+function getBestServerURL(originalUrl) {
+    const serverIP = getServerIP();
+    if (serverIP && originalUrl.includes('localhost')) {
+        return replaceLocalhostWithIP(originalUrl);
+    }
+    return originalUrl;
+}
 
 // Send prediction data to server asynchronously
 async function sendPredictionData() {
@@ -113,7 +157,10 @@ async function sendPredictionData() {
         };
         
         // Send asynchronously and process response for BPM hint
-        fetch(PREDICTION_SERVER_URL, {
+        // Use currentServerURL which may have been updated to use IP instead of localhost
+        const urlToUse = currentServerURL;
+        
+        fetch(urlToUse, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -136,9 +183,52 @@ async function sendPredictionData() {
             }
         })
         .catch(error => {
-            // Silently ignore errors - don't block game execution
-            // Uncomment for debugging:
-            // console.warn('Failed to send prediction data:', error);
+            // If localhost failed and we haven't switched to IP yet, try IP
+            if (urlToUse.includes('localhost') && getServerIP()) {
+                const ipUrl = replaceLocalhostWithIP(urlToUse);
+                if (ipUrl !== urlToUse) {
+                    // Update the current URL to use IP for future requests
+                    currentServerURL = ipUrl;
+                    console.log(`Prediction request to localhost failed, switching to IP: ${ipUrl}`);
+                    
+                    // Retry immediately with IP
+                    fetch(ipUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(payload)
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            return null;
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        // Extract average BPM from server response and feed it to the BPM estimator
+                        if (data && data.avg_bpm_last_20s !== null && data.avg_bpm_last_20s !== undefined) {
+                            const serverBPM = data.avg_bpm_last_20s;
+                            if (serverBPM > 0 && serverBPM < 300) {
+                                BPM_ESTIMATOR.setServerBPMHint(serverBPM);
+                            }
+                        }
+                    })
+                    .catch(retryError => {
+                        // Silently ignore retry errors - don't block game execution
+                        // Uncomment for debugging:
+                        // console.warn('Failed to send prediction data (retry with IP also failed):', retryError);
+                    });
+                } else {
+                    // Silently ignore errors - don't block game execution
+                    // Uncomment for debugging:
+                    // console.warn('Failed to send prediction data:', error);
+                }
+            } else {
+                // Silently ignore errors - don't block game execution
+                // Uncomment for debugging:
+                // console.warn('Failed to send prediction data:', error);
+            }
         });
         
     } catch (error) {

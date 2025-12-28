@@ -359,6 +359,49 @@
         let requestHistory = [];
         let autoUpdateInterval = null;
         let isInitialized = false;
+        let serverIP = null; // Cache the server IP
+
+        // Get server IP from current page hostname (if not localhost)
+        function getServerIP() {
+            if (serverIP) {
+                return serverIP;
+            }
+            
+            const hostname = window.location.hostname;
+            
+            // If page was loaded from an IP address (not localhost), use that
+            if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+                // Check if it's a valid IP address
+                const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+                if (ipPattern.test(hostname)) {
+                    serverIP = hostname;
+                    return serverIP;
+                }
+                // If it's a hostname, try to resolve it (but we'll use it as-is for now)
+                serverIP = hostname;
+                return serverIP;
+            }
+            
+            return null;
+        }
+
+        // Replace localhost with server IP in a URL
+        function replaceLocalhostWithIP(url) {
+            const serverIP = getServerIP();
+            if (serverIP && url.includes('localhost')) {
+                return url.replace(/localhost/g, serverIP);
+            }
+            return url;
+        }
+
+        // Get the best URL to use (IP if available, otherwise original)
+        function getBestServerURL(originalUrl) {
+            const serverIP = getServerIP();
+            if (serverIP && originalUrl.includes('localhost')) {
+                return replaceLocalhostWithIP(originalUrl);
+            }
+            return originalUrl;
+        }
 
         // Initialize beat detection
         async function initializeBeatDetection() {
@@ -594,7 +637,7 @@
             }
         }
 
-        // Send test request
+        // Send test request with automatic localhost -> IP retry
         async function sendTestRequest() {
             const payload = buildPayload();
             if (!payload) {
@@ -602,22 +645,59 @@
                 return;
             }
 
-            const url = document.getElementById('serverUrl').value;
+            let url = document.getElementById('serverUrl').value;
             const timestamp = new Date().toISOString();
+            let triedIP = false;
+            const originalUrl = url;
 
             showStatus('info', 'Sending request...');
 
-            try {
-                const response = await fetch(url, {
+            // Helper function to perform the actual fetch
+            async function performFetch(targetUrl) {
+                return await fetch(targetUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify(payload)
                 });
+            }
+
+            try {
+                let response;
+                try {
+                    // Try with original URL first
+                    response = await performFetch(url);
+                } catch (firstError) {
+                    // If localhost fails and we haven't tried IP yet, retry with IP
+                    if (url.includes('localhost') && !triedIP && getServerIP()) {
+                        const ipUrl = replaceLocalhostWithIP(url);
+                        if (ipUrl !== url) {
+                            triedIP = true;
+                            url = ipUrl;
+                            showStatus('info', `localhost failed, retrying with IP: ${getServerIP()}...`);
+                            console.log(`Request to localhost failed, retrying with IP: ${ipUrl}`);
+                            
+                            // Update the URL input field
+                            document.getElementById('serverUrl').value = ipUrl;
+                            
+                            // Retry with IP
+                            response = await performFetch(ipUrl);
+                        } else {
+                            throw firstError;
+                        }
+                    } else {
+                        throw firstError;
+                    }
+                }
 
                 const responseText = await response.text();
-                const responseData = response.ok ? JSON.parse(responseText) : null;
+                let responseData = null;
+                try {
+                    responseData = response.ok ? JSON.parse(responseText) : null;
+                } catch (parseError) {
+                    console.warn('Failed to parse response as JSON:', parseError);
+                }
 
                 const historyItem = {
                     timestamp: timestamp,
@@ -625,9 +705,20 @@
                     status: response.status,
                     statusText: response.statusText,
                     request: payload,
-                    response: response.ok ? responseData : { error: responseText },
-                    url: url
+                    response: response.ok ? responseData : { error: responseText, rawResponse: responseText.substring(0, 500) },
+                    url: url, // This will be the actual URL used (IP if retried)
+                    originalUrl: triedIP ? originalUrl : null, // Track if we switched from localhost
+                    responseHeaders: {}
                 };
+
+                // Capture response headers for debugging
+                try {
+                    response.headers.forEach((value, key) => {
+                        historyItem.responseHeaders[key] = value;
+                    });
+                } catch (headerError) {
+                    console.warn('Could not read response headers:', headerError);
+                }
 
                 requestHistory.unshift(historyItem);
                 if (requestHistory.length > 20) {
@@ -642,15 +733,191 @@
                         showStatus('success', `Server returned avg_bpm_last_20s: ${responseData.avg_bpm_last_20s.toFixed(2)}`);
                     }
                 } else {
-                    showStatus('error', `Request failed! Status: ${response.status} ${response.statusText}`);
+                    let errorMsg = `Request failed! Status: ${response.status} ${response.statusText}`;
+                    if (responseText && responseText.length > 0) {
+                        const preview = responseText.length > 100 ? responseText.substring(0, 100) + '...' : responseText;
+                        errorMsg += `\nResponse: ${preview}`;
+                    }
+                    showStatus('error', errorMsg);
+                    console.error('Prediction request failed with status:', {
+                        status: response.status,
+                        statusText: response.statusText,
+                        responseText: responseText,
+                        url: url,
+                        timestamp: timestamp
+                    });
                 }
             } catch (error) {
+                // If we haven't tried IP yet and this is a network error with localhost, try IP
+                if (!triedIP && url.includes('localhost') && getServerIP()) {
+                    const ipUrl = replaceLocalhostWithIP(url);
+                    if (ipUrl !== url) {
+                        triedIP = true;
+                        url = ipUrl;
+                        showStatus('info', `localhost failed, retrying with IP: ${getServerIP()}...`);
+                        console.log(`Request to localhost failed, retrying with IP: ${ipUrl}`);
+                        
+                        // Update the URL input field
+                        document.getElementById('serverUrl').value = ipUrl;
+                        
+                        // Retry with IP
+                        try {
+                            const response = await performFetch(ipUrl);
+                            const responseText = await response.text();
+                            let responseData = null;
+                            try {
+                                responseData = response.ok ? JSON.parse(responseText) : null;
+                            } catch (parseError) {
+                                console.warn('Failed to parse response as JSON:', parseError);
+                            }
+
+                            const historyItem = {
+                                timestamp: timestamp,
+                                success: response.ok,
+                                status: response.status,
+                                statusText: response.statusText,
+                                request: payload,
+                                response: response.ok ? responseData : { error: responseText, rawResponse: responseText.substring(0, 500) },
+                                url: ipUrl,
+                                originalUrl: originalUrl,
+                                responseHeaders: {}
+                            };
+
+                            // Capture response headers for debugging
+                            try {
+                                response.headers.forEach((value, key) => {
+                                    historyItem.responseHeaders[key] = value;
+                                });
+                            } catch (headerError) {
+                                console.warn('Could not read response headers:', headerError);
+                            }
+
+                            requestHistory.unshift(historyItem);
+                            if (requestHistory.length > 20) {
+                                requestHistory = requestHistory.slice(0, 20);
+                            }
+
+                            updateRequestHistory();
+
+                            if (response.ok) {
+                                showStatus('success', `Request sent successfully with IP! Status: ${response.status}`);
+                                if (responseData && responseData.avg_bpm_last_20s !== null && responseData.avg_bpm_last_20s !== undefined) {
+                                    showStatus('success', `Server returned avg_bpm_last_20s: ${responseData.avg_bpm_last_20s.toFixed(2)}`);
+                                }
+                                return; // Success, exit function
+                            } else {
+                                let errorMsg = `Request failed with IP! Status: ${response.status} ${response.statusText}`;
+                                if (responseText && responseText.length > 0) {
+                                    const preview = responseText.length > 100 ? responseText.substring(0, 100) + '...' : responseText;
+                                    errorMsg += `\nResponse: ${preview}`;
+                                }
+                                showStatus('error', errorMsg);
+                                console.error('Prediction request failed with status:', {
+                                    status: response.status,
+                                    statusText: response.statusText,
+                                    responseText: responseText,
+                                    url: ipUrl,
+                                    timestamp: timestamp
+                                });
+                                return; // Exit after showing error
+                            }
+                        } catch (retryError) {
+                            // Retry also failed, fall through to error handling below
+                            error = retryError;
+                        }
+                    }
+                }
+
+                // Build detailed error information
+                const errorDetails = {
+                    message: error.message || 'Unknown error',
+                    name: error.name || 'Error',
+                    type: error.constructor?.name || 'Error',
+                    stack: error.stack || null
+                };
+
+                // Add network-specific error details
+                const isNetworkError = error.name === 'TypeError' && (
+                    error.message.includes('fetch') || 
+                    error.message.includes('Failed to fetch') ||
+                    error.message.includes('Load failed') ||
+                    error.message.includes('NetworkError')
+                );
+                
+                // Check for SSL/certificate issues
+                // TypeError with "Load failed" or "Failed to fetch" on HTTPS usually means SSL certificate issue
+                const isSSLError = url.startsWith('https://') && (
+                    error.message.includes('certificate') ||
+                    error.message.includes('SSL') ||
+                    error.message.includes('TLS') ||
+                    error.message.includes('ERR_CERT') ||
+                    error.message.includes('net::ERR_CERT') ||
+                    (error.name === 'TypeError' && (
+                        error.message.includes('Load failed') ||
+                        error.message.includes('Failed to fetch') ||
+                        error.message.toLowerCase().includes('networkerror')
+                    ))
+                );
+                
+                if (isNetworkError || isSSLError) {
+                    if (isSSLError || (url.startsWith('https://') && isNetworkError)) {
+                        errorDetails.networkError = 'SSL Certificate Error - HTTPS request blocked';
+                        errorDetails.networkErrorDetails = [
+                            'The server is using a self-signed SSL certificate',
+                            'Browsers block HTTPS requests with invalid certificates for security',
+                            'Solutions:',
+                            '  1. Accept the certificate first:',
+                            '     - Open this URL in a new tab: ' + url,
+                            '     - Click "Advanced" → "Proceed to site" (or similar)',
+                            '     - Then try the request again',
+                            '  2. Note: The server only supports HTTPS, not HTTP',
+                            '  3. This is normal for development - the certificate is self-signed'
+                        ];
+                        errorDetails.isSSLError = true;
+                    } else {
+                        errorDetails.networkError = 'Network request failed - possible causes:';
+                        errorDetails.networkErrorDetails = [
+                            'Server is not running on port 8444',
+                            'CORS policy blocking the request',
+                            'Network connectivity problem',
+                            'Firewall blocking the connection',
+                            'Wrong port number'
+                        ];
+                    }
+                    
+                    // Add note about IP retry if we tried it
+                    if (triedIP) {
+                        errorDetails.networkErrorDetails.push(`✓ Auto-switched from localhost to IP (${getServerIP()})`);
+                    } else if (url.includes('localhost') && !getServerIP()) {
+                        errorDetails.networkErrorDetails.push('Note: Page loaded from localhost, cannot auto-detect server IP');
+                    }
+                }
+
+                // Add URL validation details
+                try {
+                    const urlObj = new URL(url);
+                    errorDetails.urlDetails = {
+                        protocol: urlObj.protocol,
+                        hostname: urlObj.hostname,
+                        port: urlObj.port || (urlObj.protocol === 'https:' ? '443' : '80'),
+                        pathname: urlObj.pathname
+                    };
+                } catch (urlError) {
+                    errorDetails.urlDetails = { error: 'Invalid URL format' };
+                }
+
+                // Add payload details
+                errorDetails.payloadSize = JSON.stringify(payload).length;
+                errorDetails.payloadKeys = Object.keys(payload);
+
                 const historyItem = {
                     timestamp: timestamp,
                     success: false,
-                    error: error.message,
+                    error: errorDetails.message,
+                    errorDetails: errorDetails,
                     request: payload,
-                    url: url
+                    url: url, // This will be the actual URL used (IP if retried)
+                    originalUrl: triedIP ? originalUrl : null // Track if we switched from localhost
                 };
 
                 requestHistory.unshift(historyItem);
@@ -659,7 +926,24 @@
                 }
 
                 updateRequestHistory();
-                showStatus('error', `Request failed: ${error.message}`);
+                
+                // Show detailed error message
+                let errorMessage = `Request failed: ${errorDetails.message}`;
+                if (errorDetails.name) {
+                    errorMessage += ` (${errorDetails.name})`;
+                }
+                if (errorDetails.networkError) {
+                    errorMessage += `\n${errorDetails.networkError}`;
+                }
+                showStatus('error', errorMessage);
+                
+                // Log full error details to console
+                console.error('Prediction request failed:', {
+                    error: errorDetails,
+                    url: url,
+                    payloadSize: errorDetails.payloadSize,
+                    timestamp: timestamp
+                });
             }
         }
 
@@ -689,11 +973,98 @@
                     <div class="request-item ${itemClass}">
                         <div class="request-time">${time} - ${item.url}</div>
                 `;
+                
+                // Show if we switched from localhost to IP
+                if (item.originalUrl && item.originalUrl !== item.url) {
+                    content += `<div style="margin-top: 3px; font-size: 0.85em; color: #64b4ff;"><strong>Auto-switched:</strong> ${item.originalUrl} → ${item.url}</div>`;
+                }
 
                 if (item.error) {
                     content += `<div><strong>Error:</strong> ${item.error}</div>`;
+                    
+                    // Display detailed error information if available
+                    if (item.errorDetails) {
+                        const details = item.errorDetails;
+                        
+                        if (details.name && details.name !== 'Error') {
+                            content += `<div style="margin-top: 5px; font-size: 0.9em;"><strong>Error Type:</strong> ${details.name} (${details.type || 'Error'})</div>`;
+                        }
+                        
+                        if (details.networkError) {
+                            const isSSL = details.isSSLError;
+                            content += `<div style="margin-top: 5px; font-size: 0.9em; ${isSSL ? 'color: #ffaa00; font-weight: bold;' : ''}"><strong>Network Error:</strong> ${details.networkError}</div>`;
+                            if (details.networkErrorDetails && details.networkErrorDetails.length > 0) {
+                                content += `<ul style="margin: 5px 0 5px 20px; font-size: 0.85em; color: #ccc;">`;
+                                details.networkErrorDetails.forEach(detail => {
+                                    const isSolution = detail.trim().startsWith('Solutions:') || detail.trim().match(/^\d+\./);
+                                    const isCheckmark = detail.trim().startsWith('✓');
+                                    content += `<li style="${isSolution ? 'font-weight: bold; color: #64b4ff; margin-top: 5px;' : isCheckmark ? 'color: #51cf66;' : ''}">${detail}</li>`;
+                                });
+                                content += `</ul>`;
+                            }
+                            
+                            // Add certificate acceptance helper for SSL errors
+                            if (isSSL && item.url.startsWith('https://')) {
+                                content += `<div style="margin-top: 10px; padding: 8px; background: rgba(255, 170, 0, 0.1); border: 1px solid rgba(255, 170, 0, 0.3); border-radius: 4px;">`;
+                                content += `<div style="font-size: 0.9em; margin-bottom: 8px;"><strong>⚠️ SSL Certificate Issue</strong></div>`;
+                                content += `<div style="font-size: 0.85em; margin-bottom: 8px; color: #ccc;">To fix this, you need to accept the self-signed certificate first:</div>`;
+                                content += `<ol style="font-size: 0.85em; margin: 0 0 8px 20px; color: #ccc; padding-left: 15px;">`;
+                                content += `<li>Click the button below to open the server URL</li>`;
+                                content += `<li>In the security warning, click "Advanced"</li>`;
+                                content += `<li>Click "Proceed to site" (or similar)</li>`;
+                                content += `<li>Come back and try the request again</li>`;
+                                content += `</ol>`;
+                                content += `<a href="${item.url}" target="_blank" style="display: inline-block; background: #667eea; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em; text-decoration: none; margin-right: 8px;">Open ${item.urlDetails?.hostname || 'Server URL'}</a>`;
+                                content += `<button onclick="sendTestRequest();" style="background: #51cf66; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85em;">Retry Request</button>`;
+                                content += `</div>`;
+                            }
+                        }
+                        
+                        if (details.urlDetails) {
+                            content += `<div style="margin-top: 5px; font-size: 0.9em;"><strong>URL Details:</strong> `;
+                            if (details.urlDetails.error) {
+                                content += `<span style="color: #ff6b6b;">${details.urlDetails.error}</span>`;
+                            } else {
+                                content += `${details.urlDetails.protocol}//${details.urlDetails.hostname}`;
+                                if (details.urlDetails.port) {
+                                    content += `:${details.urlDetails.port}`;
+                                }
+                                content += details.urlDetails.pathname;
+                            }
+                            content += `</div>`;
+                        }
+                        
+                        if (details.payloadSize !== undefined) {
+                            content += `<div style="margin-top: 5px; font-size: 0.9em;"><strong>Payload Size:</strong> ${details.payloadSize} bytes</div>`;
+                        }
+                        
+                        if (details.stack) {
+                            content += `<details style="margin-top: 5px; font-size: 0.85em;"><summary style="cursor: pointer; color: #b0c4ff;">Stack Trace</summary><pre style="margin-top: 5px; padding: 5px; background: rgba(0,0,0,0.3); border-radius: 3px; overflow-x: auto; font-size: 0.8em;">${details.stack}</pre></details>`;
+                        }
+                    }
                 } else {
                     content += `<div><strong>Status:</strong> ${item.status} ${item.statusText || ''}</div>`;
+                    
+                    // Show response details for failed requests
+                    if (!item.success && item.response) {
+                        if (item.response.error) {
+                            const errorPreview = item.response.error.length > 200 
+                                ? item.response.error.substring(0, 200) + '...' 
+                                : item.response.error;
+                            content += `<div style="margin-top: 5px; font-size: 0.9em;"><strong>Response:</strong> <pre style="display: inline; font-size: 0.85em; color: #ff6b6b;">${errorPreview}</pre></div>`;
+                        }
+                        if (item.response.rawResponse) {
+                            const rawPreview = item.response.rawResponse.length > 200 
+                                ? item.response.rawResponse.substring(0, 200) + '...' 
+                                : item.response.rawResponse;
+                            content += `<div style="margin-top: 5px; font-size: 0.9em;"><strong>Raw Response:</strong> <pre style="display: inline; font-size: 0.85em; color: #ccc;">${rawPreview}</pre></div>`;
+                        }
+                    }
+                    
+                    // Show response headers if available
+                    if (item.responseHeaders && Object.keys(item.responseHeaders).length > 0) {
+                        content += `<details style="margin-top: 5px; font-size: 0.85em;"><summary style="cursor: pointer; color: #b0c4ff;">Response Headers</summary><pre style="margin-top: 5px; padding: 5px; background: rgba(0,0,0,0.3); border-radius: 3px; overflow-x: auto; font-size: 0.8em;">${JSON.stringify(item.responseHeaders, null, 2)}</pre></details>`;
+                    }
                 }
 
                 if (item.response && item.response.avg_bpm_last_20s !== undefined) {
