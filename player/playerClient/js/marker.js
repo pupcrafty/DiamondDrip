@@ -45,7 +45,7 @@ class Marker {
         // Check if marker has left the yellow circle (clickable area)
         // Only check after it has passed through the target center
         
-        const yellowRadius = TARGET_RADIUS + 30;
+        const yellowRadius = getYellowRadius();
         const dx = this.x - this.target.x;
         const dy = this.y - this.target.y;
         const distanceFromTarget = Math.sqrt(dx * dx + dy * dy);

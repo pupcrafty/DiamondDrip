@@ -18,20 +18,24 @@
         canvas {
             border: 2px solid #333;
             background-color: #121218;
+            max-width: 100vw;
+            max-height: 100vh;
+            width: auto;
+            height: auto;
         }
     </style>
 </head>
 <body>
-    <canvas id="gameCanvas" width="1000" height="1000"></canvas>
-    <script src="logger.js"></script>
-    <script src="config.js"></script>
-    <script src="bpmEstimator.js"></script>
-    <script src="energyClassifier.js"></script>
-    <script src="rhythmPredictor.js"></script>
-    <script src="beatDetection.js"></script>
-    <script src="target.js"></script>
-    <script src="marker.js"></script>
-    <script src="game.js"></script>
+    <canvas id="gameCanvas"></canvas>
+    <script src="js/logger.js"></script>
+    <script src="../config/config.js"></script>
+    <script src="../beatDetector/js/bpmEstimator.js"></script>
+    <script src="../beatDetector/js/energyClassifier.js"></script>
+    <script src="../beatDetector/js/rhythmPredictor.js"></script>
+    <script src="../beatDetector/js/beatDetection.js"></script>
+    <script src="js/target.js"></script>
+    <script src="js/marker.js"></script>
+    <script src="js/game.js"></script>
 </body>
 </html>
 

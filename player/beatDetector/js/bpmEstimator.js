@@ -21,6 +21,8 @@ const BPM_ESTIMATOR = (function() {
     let tempoChangeDetected = false; // Flag for tempo change detection
     let hasLoggedSmoothedBPM = false; // Track if we've logged first smoothed BPM
     let hasLoggedHyperSmoothedBPM = false; // Track if we've logged first hyper-smoothed BPM
+    let hyperSmoothedBPMHistory = []; // History of hyper-smoothed BPM values
+    const MAX_BPM_HISTORY = 20; // Keep last 20 BPM values
 
     function calculateBPM() {
         if (beatTimes.length < MIN_BEATS_FOR_BPM) {
@@ -109,6 +111,11 @@ const BPM_ESTIMATOR = (function() {
             if (hyperSmoothedBPM > MAX_BPM_BEFORE_HALVING) {
                 hyperSmoothedBPM = hyperSmoothedBPM / 2;
             }
+            // Add to history
+            hyperSmoothedBPMHistory.push(hyperSmoothedBPM);
+            if (hyperSmoothedBPMHistory.length > MAX_BPM_HISTORY) {
+                hyperSmoothedBPMHistory.shift();
+            }
             if (!hasLoggedHyperSmoothedBPM && bpmSamples.length >= 2) {
                 log('BPM', '🎯 [BPM CALCULATION] First hyper-smoothed BPM calculated:', hyperSmoothedBPM.toFixed(1));
                 hasLoggedHyperSmoothedBPM = true;
@@ -142,6 +149,11 @@ const BPM_ESTIMATOR = (function() {
             // If BPM exceeds MAX_BPM_BEFORE_HALVING, assume double counting and halve it
             if (hyperSmoothedBPM > MAX_BPM_BEFORE_HALVING) {
                 hyperSmoothedBPM = hyperSmoothedBPM / 2;
+            }
+            // Add to history
+            hyperSmoothedBPMHistory.push(hyperSmoothedBPM);
+            if (hyperSmoothedBPMHistory.length > MAX_BPM_HISTORY) {
+                hyperSmoothedBPMHistory.shift();
             }
             if (!hasLoggedHyperSmoothedBPM) {
                 log('BPM', '🎯 [BPM CALCULATION] First hyper-smoothed BPM calculated:', hyperSmoothedBPM.toFixed(1));
@@ -262,6 +274,12 @@ const BPM_ESTIMATOR = (function() {
                 hyperSmoothedBPM = hyperSmoothedBPM / 2;
             }
             
+            // Add to history
+            hyperSmoothedBPMHistory.push(hyperSmoothedBPM);
+            if (hyperSmoothedBPMHistory.length > MAX_BPM_HISTORY) {
+                hyperSmoothedBPMHistory.shift();
+            }
+            
             // Reset counters since we've adapted to the new tempo
             acceptedBpmCount = bpmSamples.length;
             droppedBpmCount = 0;
@@ -326,6 +344,10 @@ const BPM_ESTIMATOR = (function() {
             };
         },
 
+        getHyperSmoothedBPMHistory: function() {
+            return [...hyperSmoothedBPMHistory];
+        },
+
         // Reset all state
         reset: function() {
             beatTimes = [];
@@ -338,6 +360,7 @@ const BPM_ESTIMATOR = (function() {
             tempoChangeDetected = false;
             hasLoggedSmoothedBPM = false;
             hasLoggedHyperSmoothedBPM = false;
+            hyperSmoothedBPMHistory = [];
         }
     };
 })();

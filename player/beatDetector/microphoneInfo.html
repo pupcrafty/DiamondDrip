@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microphone API Detection</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: #80b0ff;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .section {
+            background-color: rgba(26, 26, 36, 0.8);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #333;
+            margin-bottom: 20px;
+        }
+        
+        .section h2 {
+            margin-top: 0;
+            color: #80b0ff;
+            font-size: 18px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+        }
+        
+        .info-item {
+            background-color: rgba(10, 10, 18, 0.6);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #222;
+        }
+        
+        .info-label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+        
+        .info-value {
+            font-size: 16px;
+            color: #80b0ff;
+            word-break: break-all;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .info-value.available {
+            color: #44ff44;
+        }
+        
+        .info-value.unavailable {
+            color: #ff6666;
+        }
+        
+        .info-value.partial {
+            color: #ffaa44;
+        }
+        
+        .code-block {
+            background-color: #0a0a12;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #222;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            margin-top: 10px;
+        }
+        
+        .code-block pre {
+            margin: 0;
+            color: #aaa;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-left: 10px;
+        }
+        
+        .status-badge.available {
+            background-color: rgba(68, 255, 68, 0.2);
+            color: #44ff44;
+        }
+        
+        .status-badge.unavailable {
+            background-color: rgba(255, 102, 102, 0.2);
+            color: #ff6666;
+        }
+        
+        .status-badge.partial {
+            background-color: rgba(255, 170, 68, 0.2);
+            color: #ffaa44;
+        }
+        
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 10px 10px 10px 0;
+            transition: background-color 0.2s;
+        }
+        
+        button:hover {
+            background-color: #5aa0f2;
+        }
+        
+        button:disabled {
+            background-color: #444;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        .test-result {
+            margin-top: 15px;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #333;
+            background-color: rgba(10, 10, 18, 0.6);
+        }
+        
+        .test-result.success {
+            border-color: #44ff44;
+            background-color: rgba(68, 255, 68, 0.1);
+        }
+        
+        .test-result.error {
+            border-color: #ff6666;
+            background-color: rgba(255, 102, 102, 0.1);
+        }
+        
+        .test-result h3 {
+            margin-top: 0;
+            color: #80b0ff;
+        }
+        
+        .test-result.success h3 {
+            color: #44ff44;
+        }
+        
+        .test-result.error h3 {
+            color: #ff6666;
+        }
+        
+        .copy-success {
+            display: inline-block;
+            margin-left: 10px;
+            padding: 4px 8px;
+            background-color: rgba(68, 255, 68, 0.2);
+            color: #44ff44;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
+        #serverResult {
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Microphone API Detection</h1>
+        <p class="subtitle">Comprehensive browser capability detection for microphone access</p>
+        
+        <div class="section">
+            <h2>Browser Information</h2>
+            <div class="info-grid" id="browserInfo"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Web Audio API Support</h2>
+            <div class="info-grid" id="audioContextInfo"></div>
+        </div>
+        
+        <div class="section">
+            <h2>MediaDevices API Support</h2>
+            <div class="info-grid" id="mediaDevicesInfo"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Legacy getUserMedia Support</h2>
+            <div class="info-grid" id="legacyGetUserMediaInfo"></div>
+        </div>
+        
+        <div class="section">
+            <h2>MediaStream API Support</h2>
+            <div class="info-grid" id="mediaStreamInfo"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Audio Constraints Support</h2>
+            <div class="info-grid" id="constraintsInfo"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Permission API Support</h2>
+            <div class="info-grid" id="permissionInfo"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Test Microphone Access</h2>
+            <button id="testBtn">Test Microphone Access</button>
+            <button id="refreshBtn">Refresh Detection</button>
+            <button id="copyBtn" style="display: none;">Copy All Info as JSON</button>
+            <button id="sendBtn" style="display: none;">Send to Server</button>
+            <div id="serverConfig" style="margin-top: 15px; padding: 10px; background-color: rgba(10, 10, 18, 0.6); border-radius: 6px; border: 1px solid #222;">
+                <label style="color: #aaa; font-size: 12px;">Server URL:</label>
+                <input type="text" id="serverUrl" value="https://localhost:9001/api/microphone-info" 
+                       style="width: 100%; padding: 8px; margin-top: 5px; background-color: #0a0a12; 
+                              border: 1px solid #333; border-radius: 4px; color: #e0e0e0; font-family: monospace; font-size: 12px;">
+            </div>
+            <div id="testResult"></div>
+            <div id="serverResult"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Raw API Objects</h2>
+            <div class="code-block">
+                <pre id="rawObjects"></pre>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // XSS Protection: HTML escaping function
+        function escapeHtml(text) {
+            if (text == null) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // Detection functions
+        function detectBrowserInfo() {
+            const info = {
+                userAgent: navigator.userAgent,
+                platform: navigator.platform,
+                vendor: navigator.vendor,
+                language: navigator.language,
+                cookieEnabled: navigator.cookieEnabled,
+                onLine: navigator.onLine
+            };
+            
+            // Detect browser
+            let browser = 'Unknown';
+            if (navigator.userAgent.indexOf('Chrome') > -1 && navigator.vendor.indexOf('Google') > -1) {
+                browser = 'Chrome';
+            } else if (navigator.userAgent.indexOf('Safari') > -1 && navigator.vendor.indexOf('Apple') > -1) {
+                browser = 'Safari';
+            } else if (navigator.userAgent.indexOf('Firefox') > -1) {
+                browser = 'Firefox';
+            } else if (navigator.userAgent.indexOf('Edge') > -1) {
+                browser = 'Edge';
+            } else if (navigator.userAgent.indexOf('Opera') > -1 || navigator.userAgent.indexOf('OPR') > -1) {
+                browser = 'Opera';
+            }
+            
+            return { browser, ...info };
+        }
+        
+        function detectAudioContext() {
+            return {
+                AudioContext: !!window.AudioContext,
+                webkitAudioContext: !!window.webkitAudioContext,
+                available: !!(window.AudioContext || window.webkitAudioContext),
+                sampleRate: (() => {
+                    try {
+                        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                        const rate = ctx.sampleRate;
+                        ctx.close();
+                        return rate;
+                    } catch (e) {
+                        return null;
+                    }
+                })(),
+                state: (() => {
+                    try {
+                        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                        const state = ctx.state;
+                        ctx.close();
+                        return state;
+                    } catch (e) {
+                        return null;
+                    }
+                })()
+            };
+        }
+        
+        function detectMediaDevices() {
+            const hasMediaDevices = !!navigator.mediaDevices;
+            const hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+            const hasEnumerateDevices = !!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices);
+            const hasGetSupportedConstraints = !!(navigator.mediaDevices && navigator.mediaDevices.getSupportedConstraints);
+            
+            let supportedConstraints = null;
+            if (hasGetSupportedConstraints) {
+                try {
+                    supportedConstraints = navigator.mediaDevices.getSupportedConstraints();
+                } catch (e) {
+                    supportedConstraints = { error: e.message };
+                }
+            }
+            
+            return {
+                mediaDevices: hasMediaDevices,
+                getUserMedia: hasGetUserMedia,
+                enumerateDevices: hasEnumerateDevices,
+                getSupportedConstraints: hasGetSupportedConstraints,
+                supportedConstraints: supportedConstraints,
+                available: hasMediaDevices && hasGetUserMedia
+            };
+        }
+        
+        function detectLegacyGetUserMedia() {
+            return {
+                navigator_getUserMedia: !!navigator.getUserMedia,
+                navigator_webkitGetUserMedia: !!navigator.webkitGetUserMedia,
+                navigator_mozGetUserMedia: !!navigator.mozGetUserMedia,
+                navigator_msGetUserMedia: !!navigator.msGetUserMedia,
+                available: !!(navigator.getUserMedia || navigator.webkitGetUserMedia || 
+                              navigator.mozGetUserMedia || navigator.msGetUserMedia)
+            };
+        }
+        
+        function detectMediaStream() {
+            return {
+                MediaStream: !!window.MediaStream,
+                MediaStreamTrack: !!window.MediaStreamTrack,
+                MediaStreamConstraints: !!window.MediaStreamConstraints,
+                available: !!window.MediaStream
+            };
+        }
+        
+        function detectConstraints() {
+            const constraints = {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+                sampleRate: false,
+                channelCount: false,
+                latency: false,
+                volume: false
+            };
+            
+            if (navigator.mediaDevices && navigator.mediaDevices.getSupportedConstraints) {
+                try {
+                    const supported = navigator.mediaDevices.getSupportedConstraints();
+                    Object.keys(constraints).forEach(key => {
+                        constraints[key] = supported[key] || false;
+                    });
+                } catch (e) {
+                    // Ignore
+                }
+            }
+            
+            return constraints;
+        }
+        
+        function detectPermissions() {
+            return {
+                permissions: !!navigator.permissions,
+                query: !!(navigator.permissions && navigator.permissions.query),
+                available: !!navigator.permissions
+            };
+        }
+        
+        // Render functions
+        function renderInfoGrid(containerId, data, labels) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            
+            Object.keys(data).forEach(key => {
+                const item = document.createElement('div');
+                item.className = 'info-item';
+                
+                const label = document.createElement('div');
+                label.className = 'info-label';
+                label.textContent = labels[key] || key;
+                
+                const value = document.createElement('div');
+                value.className = 'info-value';
+                
+                let displayValue = data[key];
+                let status = '';
+                
+                if (typeof displayValue === 'boolean') {
+                    displayValue = displayValue ? 'Yes' : 'No';
+                    value.classList.add(displayValue === 'Yes' ? 'available' : 'unavailable');
+                    status = displayValue === 'Yes' ? 'available' : 'unavailable';
+                } else if (displayValue === null || displayValue === undefined) {
+                    displayValue = 'N/A';
+                    value.classList.add('unavailable');
+                    status = 'unavailable';
+                } else if (typeof displayValue === 'object') {
+                    displayValue = JSON.stringify(displayValue, null, 2);
+                    value.classList.add('partial');
+                    status = 'partial';
+                } else {
+                    value.classList.add('available');
+                    status = 'available';
+                }
+                
+                value.textContent = displayValue;
+                if (status) {
+                    const badge = document.createElement('span');
+                    badge.className = `status-badge ${status}`;
+                    badge.textContent = status.toUpperCase();
+                    value.appendChild(badge);
+                }
+                
+                item.appendChild(label);
+                item.appendChild(value);
+                container.appendChild(item);
+            });
+        }
+        
+        function updateAllInfo() {
+            // Browser Info
+            const browserInfo = detectBrowserInfo();
+            renderInfoGrid('browserInfo', browserInfo, {
+                browser: 'Browser',
+                userAgent: 'User Agent',
+                platform: 'Platform',
+                vendor: 'Vendor',
+                language: 'Language',
+                cookieEnabled: 'Cookies Enabled',
+                onLine: 'Online'
+            });
+            
+            // Audio Context
+            const audioContextInfo = detectAudioContext();
+            renderInfoGrid('audioContextInfo', audioContextInfo, {
+                AudioContext: 'AudioContext',
+                webkitAudioContext: 'webkitAudioContext',
+                available: 'Available',
+                sampleRate: 'Sample Rate',
+                state: 'State'
+            });
+            
+            // MediaDevices
+            const mediaDevicesInfo = detectMediaDevices();
+            renderInfoGrid('mediaDevicesInfo', mediaDevicesInfo, {
+                mediaDevices: 'navigator.mediaDevices',
+                getUserMedia: 'getUserMedia',
+                enumerateDevices: 'enumerateDevices',
+                getSupportedConstraints: 'getSupportedConstraints',
+                available: 'Available',
+                supportedConstraints: 'Supported Constraints'
+            });
+            
+            // Legacy getUserMedia
+            const legacyInfo = detectLegacyGetUserMedia();
+            renderInfoGrid('legacyGetUserMediaInfo', legacyInfo, {
+                navigator_getUserMedia: 'navigator.getUserMedia',
+                navigator_webkitGetUserMedia: 'navigator.webkitGetUserMedia',
+                navigator_mozGetUserMedia: 'navigator.mozGetUserMedia',
+                navigator_msGetUserMedia: 'navigator.msGetUserMedia',
+                available: 'Available'
+            });
+            
+            // MediaStream
+            const mediaStreamInfo = detectMediaStream();
+            renderInfoGrid('mediaStreamInfo', mediaStreamInfo, {
+                MediaStream: 'MediaStream',
+                MediaStreamTrack: 'MediaStreamTrack',
+                MediaStreamConstraints: 'MediaStreamConstraints',
+                available: 'Available'
+            });
+            
+            // Constraints
+            const constraintsInfo = detectConstraints();
+            renderInfoGrid('constraintsInfo', constraintsInfo, {
+                echoCancellation: 'Echo Cancellation',
+                noiseSuppression: 'Noise Suppression',
+                autoGainControl: 'Auto Gain Control',
+                sampleRate: 'Sample Rate',
+                channelCount: 'Channel Count',
+                latency: 'Latency',
+                volume: 'Volume'
+            });
+            
+            // Permissions
+            const permissionInfo = detectPermissions();
+            renderInfoGrid('permissionInfo', permissionInfo, {
+                permissions: 'navigator.permissions',
+                query: 'permissions.query',
+                available: 'Available'
+            });
+            
+            // Raw Objects
+            const rawObjects = {
+                navigator: {
+                    mediaDevices: navigator.mediaDevices ? Object.keys(navigator.mediaDevices) : null,
+                    getUserMedia: typeof navigator.getUserMedia,
+                    webkitGetUserMedia: typeof navigator.webkitGetUserMedia,
+                    mozGetUserMedia: typeof navigator.mozGetUserMedia,
+                    msGetUserMedia: typeof navigator.msGetUserMedia
+                },
+                window: {
+                    AudioContext: typeof window.AudioContext,
+                    webkitAudioContext: typeof window.webkitAudioContext,
+                    MediaStream: typeof window.MediaStream,
+                    MediaStreamTrack: typeof window.MediaStreamTrack
+                }
+            };
+            
+            document.getElementById('rawObjects').textContent = JSON.stringify(rawObjects, null, 2);
+        }
+        
+        // Store test results for copying
+        let testResultData = null;
+        
+        // Collect all information into a comprehensive JSON object
+        function collectAllInfo() {
+            const allInfo = {
+                timestamp: new Date().toISOString(),
+                browser: detectBrowserInfo(),
+                audioContext: detectAudioContext(),
+                mediaDevices: detectMediaDevices(),
+                legacyGetUserMedia: detectLegacyGetUserMedia(),
+                mediaStream: detectMediaStream(),
+                constraints: detectConstraints(),
+                permissions: detectPermissions(),
+                testResult: testResultData,
+                rawAPIs: {
+                    navigator: {
+                        mediaDevices: navigator.mediaDevices ? Object.keys(navigator.mediaDevices) : null,
+                        getUserMedia: typeof navigator.getUserMedia,
+                        webkitGetUserMedia: typeof navigator.webkitGetUserMedia,
+                        mozGetUserMedia: typeof navigator.mozGetUserMedia,
+                        msGetUserMedia: typeof navigator.msGetUserMedia,
+                        permissions: typeof navigator.permissions
+                    },
+                    window: {
+                        AudioContext: typeof window.AudioContext,
+                        webkitAudioContext: typeof window.webkitAudioContext,
+                        MediaStream: typeof window.MediaStream,
+                        MediaStreamTrack: typeof window.MediaStreamTrack
+                    }
+                }
+            };
+            
+            return allInfo;
+        }
+        
+        // Copy all info to clipboard
+        async function copyAllInfo() {
+            try {
+                const allInfo = collectAllInfo();
+                const jsonString = JSON.stringify(allInfo, null, 2);
+                
+                // Try modern clipboard API first
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(jsonString);
+                } 
+                // Fallback for older browsers
+                else {
+                    const textArea = document.createElement('textarea');
+                    textArea.value = jsonString;
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-999999px';
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                }
+                
+                // Show success message
+                const copyBtn = document.getElementById('copyBtn');
+                const originalText = copyBtn.textContent;
+                copyBtn.textContent = '✓ Copied!';
+                copyBtn.style.backgroundColor = '#44ff44';
+                
+                setTimeout(() => {
+                    copyBtn.textContent = originalText;
+                    copyBtn.style.backgroundColor = '#4a90e2';
+                }, 2000);
+                
+            } catch (error) {
+                console.error('Error copying to clipboard:', error);
+                alert('Failed to copy to clipboard. Check console for details.');
+            }
+        }
+        
+        // Test microphone access
+        async function testMicrophone() {
+            const resultDiv = document.getElementById('testResult');
+            const copyBtn = document.getElementById('copyBtn');
+            
+            resultDiv.innerHTML = '<h3>Testing...</h3><p>Requesting microphone access...</p>';
+            resultDiv.className = 'test-result';
+            copyBtn.style.display = 'none';
+            testResultData = null;
+            
+            try {
+                let stream = null;
+                let apiUsed = 'unknown';
+                
+                // Try modern API first
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    console.log('Testing navigator.mediaDevices.getUserMedia');
+                    apiUsed = 'navigator.mediaDevices.getUserMedia';
+                    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                } 
+                // Try legacy APIs
+                else {
+                    const getUserMedia = navigator.getUserMedia || 
+                                        navigator.webkitGetUserMedia || 
+                                        navigator.mozGetUserMedia || 
+                                        navigator.msGetUserMedia;
+                    
+                    if (getUserMedia) {
+                        if (navigator.getUserMedia) {
+                            apiUsed = 'navigator.getUserMedia';
+                        } else if (navigator.webkitGetUserMedia) {
+                            apiUsed = 'navigator.webkitGetUserMedia';
+                        } else if (navigator.mozGetUserMedia) {
+                            apiUsed = 'navigator.mozGetUserMedia';
+                        } else if (navigator.msGetUserMedia) {
+                            apiUsed = 'navigator.msGetUserMedia';
+                        }
+                        
+                        console.log('Testing legacy getUserMedia:', apiUsed);
+                        stream = await new Promise((resolve, reject) => {
+                            getUserMedia.call(navigator, { audio: true }, resolve, reject);
+                        });
+                    } else {
+                        throw new Error('No getUserMedia API available');
+                    }
+                }
+                
+                // Get stream info
+                const tracks = stream.getTracks();
+                const audioTracks = tracks.filter(t => t.kind === 'audio');
+                
+                let trackInfo = [];
+                audioTracks.forEach((track, index) => {
+                    const trackData = {
+                        index: index,
+                        id: track.id,
+                        kind: track.kind,
+                        label: track.label,
+                        enabled: track.enabled,
+                        muted: track.muted,
+                        readyState: track.readyState
+                    };
+                    
+                    // Try to get settings and constraints
+                    try {
+                        if (track.getSettings) {
+                            trackData.settings = track.getSettings();
+                        }
+                    } catch (e) {
+                        trackData.settingsError = e.message;
+                    }
+                    
+                    try {
+                        if (track.getConstraints) {
+                            trackData.constraints = track.getConstraints();
+                        }
+                    } catch (e) {
+                        trackData.constraintsError = e.message;
+                    }
+                    
+                    try {
+                        if (track.getCapabilities) {
+                            trackData.capabilities = track.getCapabilities();
+                        }
+                    } catch (e) {
+                        trackData.capabilitiesError = e.message;
+                    }
+                    
+                    trackInfo.push(trackData);
+                });
+                
+                // Store test result data
+                testResultData = {
+                    success: true,
+                    apiUsed: apiUsed,
+                    timestamp: new Date().toISOString(),
+                    streamId: stream.id,
+                    active: stream.active,
+                    tracks: {
+                        total: tracks.length,
+                        audio: audioTracks.length,
+                        video: tracks.filter(t => t.kind === 'video').length
+                    },
+                    audioTracks: trackInfo
+                };
+                
+                // Stop tracks
+                tracks.forEach(track => track.stop());
+                
+                resultDiv.className = 'test-result success';
+                resultDiv.innerHTML = `
+                    <h3>✓ Microphone Access Successful!</h3>
+                    <p>Found ${audioTracks.length} audio track(s)</p>
+                    <p><strong>API Used:</strong> ${escapeHtml(apiUsed)}</p>
+                    <div class="code-block">
+                        <pre>${escapeHtml(JSON.stringify(trackInfo, null, 2))}</pre>
+                    </div>
+                `;
+                
+                // Show copy and send buttons
+                copyBtn.style.display = 'inline-block';
+                document.getElementById('sendBtn').style.display = 'inline-block';
+                
+            } catch (error) {
+                // Store error data
+                testResultData = {
+                    success: false,
+                    timestamp: new Date().toISOString(),
+                    error: {
+                        name: error.name || 'Unknown',
+                        message: error.message || 'Unknown error',
+                        code: error.code || null,
+                        constraint: error.constraint || null,
+                        stack: error.stack || null
+                    }
+                };
+                
+                resultDiv.className = 'test-result error';
+                resultDiv.innerHTML = `
+                    <h3>✗ Microphone Access Failed</h3>
+                    <p><strong>Error:</strong> ${escapeHtml(error.name || 'Unknown')}</p>
+                    <p><strong>Message:</strong> ${escapeHtml(error.message || 'Unknown error')}</p>
+                    <div class="code-block">
+                        <pre>${escapeHtml(JSON.stringify({
+                            name: error.name,
+                            message: error.message,
+                            code: error.code,
+                            constraint: error.constraint
+                        }, null, 2))}</pre>
+                    </div>
+                `;
+                
+                // Show copy and send buttons even on error
+                copyBtn.style.display = 'inline-block';
+                document.getElementById('sendBtn').style.display = 'inline-block';
+            }
+        }
+        
+        // Send data to server
+        async function sendToServer() {
+            const serverResultDiv = document.getElementById('serverResult');
+            const sendBtn = document.getElementById('sendBtn');
+            const serverUrl = document.getElementById('serverUrl').value.trim();
+            
+            if (!serverUrl) {
+                serverResultDiv.innerHTML = '<div class="test-result error"><h3>Error</h3><p>Server URL is required</p></div>';
+                return;
+            }
+            
+            sendBtn.disabled = true;
+            sendBtn.textContent = 'Sending...';
+            serverResultDiv.innerHTML = '<div class="test-result"><h3>Sending...</h3><p>Uploading data to server...</p></div>';
+            
+            try {
+                const allInfo = collectAllInfo();
+                
+                const response = await fetch(serverUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(allInfo)
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.success) {
+                    serverResultDiv.innerHTML = `
+                        <div class="test-result success">
+                            <h3>✓ Data Sent Successfully!</h3>
+                            <p><strong>Path:</strong> ${escapeHtml(result.path || 'N/A')}</p>
+                            <p><strong>Message:</strong> ${escapeHtml(result.message || 'Data saved')}</p>
+                        </div>
+                    `;
+                } else {
+                    serverResultDiv.innerHTML = `
+                        <div class="test-result error">
+                            <h3>✗ Server Error</h3>
+                            <p><strong>Error:</strong> ${escapeHtml(result.error || 'Unknown error')}</p>
+                            <p><strong>Status:</strong> ${escapeHtml(String(response.status))}</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                serverResultDiv.innerHTML = `
+                    <div class="test-result error">
+                        <h3>✗ Failed to Send</h3>
+                        <p><strong>Error:</strong> ${escapeHtml(error.message || 'Unknown error')}</p>
+                        <p>Make sure the server is running and the URL is correct.</p>
+                    </div>
+                `;
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send to Server';
+            }
+        }
+        
+        // Initialize
+        updateAllInfo();
+        
+        document.getElementById('testBtn').addEventListener('click', testMicrophone);
+        document.getElementById('refreshBtn').addEventListener('click', updateAllInfo);
+        document.getElementById('copyBtn').addEventListener('click', copyAllInfo);
+        document.getElementById('sendBtn').addEventListener('click', sendToServer);
+    </script>
+</body>
+</html>
+

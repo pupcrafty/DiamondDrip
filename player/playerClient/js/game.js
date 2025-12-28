@@ -42,7 +42,8 @@ function randomTargetPosition(existingTargets) {
 function getTopSpawnPosition(targetX) {
     // Spawn at the top of the screen, same X as target
     const x = targetX;
-    const y = 50;  // Fixed position near top of screen
+    const scale = (WIDTH + HEIGHT) / 2000;
+    const y = Math.round(50 * scale);  // Fixed position near top of screen, scaled
     
     return [x, y];
 }
@@ -66,6 +67,72 @@ function drawStar(ctx, x, y, outerRadius, innerRadius) {
 }
 
 // -----------------------------
+// Prediction Server Integration
+// -----------------------------
+const PREDICTION_SERVER_URL = 'https://localhost:8444/prediction';
+let lastPredictionSent = null; // Track last prediction sent to avoid duplicates
+
+// Send prediction data to server asynchronously
+async function sendPredictionData() {
+    try {
+        const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
+        const hyperPrediction = RHYTHM_PREDICTOR.getHyperPredictedPhrasePattern();
+        
+        // Only send if we have valid data
+        if (hyperBPM === null || hyperBPM <= 0 || hyperPrediction === null) {
+            return;
+        }
+        
+        // Create a unique key for this prediction to avoid duplicate sends
+        const predictionKey = JSON.stringify(hyperPrediction);
+        if (lastPredictionSent === predictionKey) {
+            return; // Already sent this prediction
+        }
+        lastPredictionSent = predictionKey;
+        
+        // Get BPM history (last 10 values)
+        const bpmHistory = BPM_ESTIMATOR.getHyperSmoothedBPMHistory();
+        const recentBpmHistory = bpmHistory.slice(-10);
+        
+        // Get recent pulse patterns (last 5 phrases)
+        const allPhrasePatterns = RHYTHM_PREDICTOR.getPhrasePatterns();
+        const recentPulsePatterns = allPhrasePatterns.slice(-5);
+        
+        // Get recent correct prediction parts (last 5)
+        const allCorrectParts = RHYTHM_PREDICTOR.getCorrectPredictionPatterns();
+        const recentCorrectPredictionParts = allCorrectParts.slice(-5);
+        
+        // Prepare payload
+        const payload = {
+            currentBPM: hyperBPM,
+            bpmHistory: recentBpmHistory,
+            recentPulsePatterns: recentPulsePatterns,
+            recentCorrectPredictionParts: recentCorrectPredictionParts,
+            currentPrediction: hyperPrediction,
+            timestamp: now()
+        };
+        
+        // Send asynchronously (fire and forget)
+        fetch(PREDICTION_SERVER_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload)
+        }).catch(error => {
+            // Silently ignore errors - don't block game execution
+            // Uncomment for debugging:
+            // console.warn('Failed to send prediction data:', error);
+        });
+        
+    } catch (error) {
+        // Silently ignore errors - don't block game execution
+        // Uncomment for debugging:
+        // console.warn('Error preparing prediction data:', error);
+    }
+}
+
+// -----------------------------
 // Game initialization
 // -----------------------------
 const canvas = document.getElementById('gameCanvas');
@@ -79,6 +146,30 @@ let lastErrMs = 0;
 let celebrationText = null;  // Celebration text to display when all targets reach 5+
 let celebrationTextTime = 0;  // Time when celebration text should disappear
 
+// Initialize canvas size
+function initializeCanvas() {
+    // Calculate dimensions based on window size
+    calculateCanvasDimensions();
+    
+    // Set canvas dimensions
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    
+    // Reinitialize targets with new dimensions
+    initializeTargets();
+    
+    log('GAME', '🎮 [GAME] Canvas initialized:', WIDTH, 'x', HEIGHT);
+}
+
+// Handle window resize
+function handleResize() {
+    initializeCanvas();
+    log('GAME', '🎮 [GAME] Canvas resized:', WIDTH, 'x', HEIGHT);
+}
+
+// Add resize event listener
+window.addEventListener('resize', handleResize);
+
 // Beat detection state
 let isListening = false;
 let hasEnoughData = false;
@@ -87,57 +178,54 @@ let lastPhraseStartTime = null; // Track when the current phrase started (for pr
 let lastPulseTime = -999; // Track last pulse time for gating
 const PULSE_GATE_TIME = 0.1; // Minimum time between pulses (100ms)
 
-// Initialize 8 targets in 2 groups of 4 in + shapes at the bottom
+// Initialize 6 targets in 2 groups of 3 in L shapes at the bottom
 function initializeTargets() {
-    const yellowRadius = TARGET_RADIUS + 30;  // Outermost circle radius
-    const spacing = TARGET_RADIUS * 2.5;  // Distance between target centers in + shape (closer together)
+    const yellowRadius = getYellowRadius();  // Outermost circle radius
+    const spacing = TARGET_RADIUS * 2.5;  // Distance between target centers in L shape (closer together)
     
     // Position groups at the bottom of the screen (moved up so bottom targets are fully visible)
-    const bottomY = HEIGHT - 200;  // Distance from bottom (increased to show bottom targets fully)
-    const leftGroupX = WIDTH / 4;   // Left group center X
-    const rightGroupX = 3 * WIDTH / 4;  // Right group center X
+    const scale = (WIDTH + HEIGHT) / 2000;
+    const bottomY = HEIGHT - Math.round(200 * scale);  // Distance from bottom (increased to show bottom targets fully)
+    const leftGroupX = WIDTH / 2.8;   // Left group center X (moved closer to center)
+    const rightGroupX = WIDTH / 1.75;  // Right group center X (moved closer to center)
     
-    // 8 easily visible colors
+    // 6 easily visible colors
     const colors = [
         'rgb(255, 70, 70)',    // Red
         'rgb(70, 150, 255)',   // Blue
         'rgb(70, 220, 140)',   // Green
         'rgb(255, 220, 70)',   // Yellow
         'rgb(255, 150, 70)',   // Orange
-        'rgb(200, 70, 255)',   // Purple
-        'rgb(70, 220, 255)',   // Cyan
-        'rgb(255, 70, 200)'    // Magenta
+        'rgb(200, 70, 255)'    // Purple
     ];
     
-    // Left group: + shape (Top, Bottom, Left, Right - no center)
-    // Right group: + shape (Top, Bottom, Left, Right - no center)
+    // Left group: L shape (Top, Bottom, Left - no Right)
+    // Right group: L shape (Top, Bottom, Right - no Left)
     const positions = [
-        // Left group (indices 0-3)
+        // Left group (indices 0-2)
         [leftGroupX, bottomY - spacing],        // 0: Top
         [leftGroupX, bottomY + spacing],        // 1: Bottom
         [leftGroupX - spacing, bottomY],        // 2: Left
-        [leftGroupX + spacing, bottomY],        // 3: Right
         
-        // Right group (indices 4-7)
-        [rightGroupX, bottomY - spacing],       // 4: Top
-        [rightGroupX, bottomY + spacing],       // 5: Bottom
-        [rightGroupX - spacing, bottomY],       // 6: Left
-        [rightGroupX + spacing, bottomY]        // 7: Right
+        // Right group (indices 3-5)
+        [rightGroupX, bottomY - spacing],       // 3: Top
+        [rightGroupX, bottomY + spacing],       // 4: Bottom
+        [rightGroupX + spacing, bottomY]        // 5: Right
     ];
     
     targets = [];
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 6; i++) {
         const target = new Target(-1, positions[i][0], positions[i][1], colors[i]);
         targets.push(target);
     }
 }
 
-// Initialize targets at start
-initializeTargets();
+// Initialize canvas and targets
+initializeCanvas();
 log('GAME', '🎮 [GAME] Game initialized with', targets.length, 'targets');
 
 // Track which group to spawn marker for next (alternates between left=0 and right=1)
-let nextGroup = 0;  // 0 = left group (indices 0-3), 1 = right group (indices 4-7)
+let nextGroup = 0;  // 0 = left group (indices 0-2), 1 = right group (indices 3-5)
 
 // -----------------------------
 // Beat Detection Integration
@@ -318,6 +406,11 @@ function gameLoop() {
         const predictedBeats = getPredictedBeatTimestamps(t);
         const energyLevel = ENERGY_CLASSIFIER.getCurrentEnergyLevel();
         
+        // Send prediction data to server if we have predictions
+        if (predictedBeats.length > 0) {
+            sendPredictionData();
+        }
+        
         // Spawn markers for predicted beats we haven't spawned yet
         for (const beatInfo of predictedBeats) {
             const beatKey = `${beatInfo.phraseStart}_${beatInfo.slot}`;
@@ -327,11 +420,11 @@ function gameLoop() {
                 // Alternate between groups, randomly select target within that group
                 // Only select targets with score < 5
                 const currentGroup = nextGroup;  // Save current group for logging
-                const groupStart = currentGroup * 4;  // 0 for left group, 4 for right group
+                const groupStart = currentGroup * 3;  // 0 for left group, 3 for right group
                 
                 // Filter available targets (score < 5) in this group
                 const availableTargets = [];
-                for (let i = 0; i < 4; i++) {
+                for (let i = 0; i < 3; i++) {
                     const idx = groupStart + i;
                     if (targets[idx].score < 5) {
                         availableTargets.push(idx);
@@ -340,8 +433,8 @@ function gameLoop() {
                 
                 // If no available targets in this group, try the other group
                 if (availableTargets.length === 0) {
-                    const otherGroupStart = (currentGroup === 0) ? 4 : 0;
-                    for (let i = 0; i < 4; i++) {
+                    const otherGroupStart = (currentGroup === 0) ? 3 : 0;
+                    for (let i = 0; i < 3; i++) {
                         const idx = otherGroupStart + i;
                         if (targets[idx].score < 5) {
                             availableTargets.push(idx);
@@ -461,6 +554,34 @@ function gameLoop() {
     ctx.fillStyle = 'rgb(18, 18, 24)';
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
     
+    // Draw center star (behind targets) - grows with total score of all targets
+    const starScale = (WIDTH + HEIGHT) / 2000;
+    const leftGroupX = WIDTH / 2.8;
+    const rightGroupX = WIDTH / 1.75;
+    const bottomY = HEIGHT - Math.round(200 * starScale);
+    const centerX = (leftGroupX + rightGroupX) / 2;
+    const centerY = bottomY;
+    
+    // Calculate total score of all targets
+    let totalScore = 0;
+    for (const target of targets) {
+        totalScore += target.score;
+    }
+    
+    // Maximum total score is 6 targets * 5 = 30
+    // Maximum star radius should fill the space between groups
+    const maxTotalScore = 6 * 5;  // 30
+    const maxCenterStarRadius = (rightGroupX - leftGroupX) / 2;  // Half the distance between groups (fills the space)
+    
+    if (totalScore > 0) {
+        const centerStarRadius = (totalScore / maxTotalScore) * maxCenterStarRadius;
+        const centerInnerRadius = centerStarRadius * 0.4;  // Inner radius for star shape
+        
+        // Use a neutral/white color for the center star
+        ctx.fillStyle = 'rgb(255, 255, 255)';
+        drawStar(ctx, centerX, centerY, centerStarRadius, centerInnerRadius);
+    }
+    
     // Draw targets (draw first so markers appear on top)
     for (const target of targets) {
         // Reset hit state if no markers are left
@@ -471,9 +592,10 @@ function gameLoop() {
         if (target.hit) {
             // Draw star behind target if score > 0
             if (target.score > 0) {
-                const yellowRadius = TARGET_RADIUS + 30;
-                const maxStarRadius = yellowRadius * 1.1;  // Slightly beyond outermost circle
-                const starRadius = maxStarRadius;  // Always use max size (as if score is 5)
+                const starScale = (WIDTH + HEIGHT) / 2000;
+                const yellowRadius = TARGET_RADIUS + Math.round(30 * starScale);
+                const maxStarRadius = yellowRadius * 1.1;  // Slightly beyond outermost circle (at score 5)
+                const starRadius = (target.score / 5) * maxStarRadius;  // Grow proportionally with score
                 const innerRadius = starRadius * 0.4;  // Inner radius for star shape
                 
                 ctx.fillStyle = target.color;
@@ -488,20 +610,22 @@ function gameLoop() {
             
             // Show target score if enabled in config
             if (LOG_CONFIG.TARGET_SCORES) {
+                const scoreScale = (WIDTH + HEIGHT) / 2000;
+                const scoreFontSize = Math.round(16 * scoreScale);
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                ctx.font = 'bold 16px Arial';
+                ctx.font = `bold ${scoreFontSize}px Arial`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 const scoreText = target.score.toString();
                 const textMetrics = ctx.measureText(scoreText);
                 const textWidth = textMetrics.width;
-                const textHeight = 16;
-                const padding = 6;
+                const textHeight = scoreFontSize;
+                const scorePadding = Math.round(6 * scoreScale);
                 const bgX = target.x;
-                const bgY = target.y + TARGET_RADIUS + 25;
+                const bgY = target.y + TARGET_RADIUS + Math.round(25 * scoreScale);
                 
                 // Draw background rectangle
-                ctx.fillRect(bgX - textWidth / 2 - padding, bgY - textHeight / 2 - padding / 2, textWidth + padding * 2, textHeight + padding);
+                ctx.fillRect(bgX - textWidth / 2 - scorePadding, bgY - textHeight / 2 - scorePadding / 2, textWidth + scorePadding * 2, textHeight + scorePadding);
                 
                 // Draw score text
                 ctx.fillStyle = target.color;
@@ -512,9 +636,10 @@ function gameLoop() {
         } else {
             // Draw star behind target if score > 0
             if (target.score > 0) {
-                const yellowRadius = TARGET_RADIUS + 30;
-                const maxStarRadius = yellowRadius * 1.1;  // Slightly beyond outermost circle
-                const starRadius = maxStarRadius;  // Always use max size (as if score is 5)
+                const starScale = (WIDTH + HEIGHT) / 2000;
+                const yellowRadius = TARGET_RADIUS + Math.round(30 * starScale);
+                const maxStarRadius = yellowRadius * 1.1;  // Slightly beyond outermost circle (at score 5)
+                const starRadius = (target.score / 5) * maxStarRadius;  // Grow proportionally with score
                 const innerRadius = starRadius * 0.4;  // Inner radius for star shape
                 
                 ctx.fillStyle = target.color;
@@ -522,16 +647,17 @@ function gameLoop() {
             }
             
             // Pulse effect based on how close we are to the beat when it should disappear
+            const targetScale = (WIDTH + HEIGHT) / 2000;
             let pulseR = TARGET_RADIUS;
             if (target.markers.length > 0 && target.beatDisappear) {
                 const dtToBeat = target.beatDisappear - t;
                 const pulse = Math.exp(-Math.abs(dtToBeat) * 8.0);
-                pulseR = TARGET_RADIUS + 8 * pulse;
+                pulseR = TARGET_RADIUS + Math.round(8 * pulse * targetScale);
             }
             
             // Outer pulse ring (use target color with some transparency)
             ctx.strokeStyle = target.color;
-            ctx.lineWidth = 3;
+            ctx.lineWidth = Math.max(1, Math.round(3 * targetScale));
             ctx.beginPath();
             ctx.arc(target.x, target.y, pulseR, 0, Math.PI * 2);
             ctx.stroke();
@@ -544,32 +670,34 @@ function gameLoop() {
             
             // Timing window rings (visualize Perfect/Good buffer)
             ctx.strokeStyle = 'rgb(60, 220, 120)';
-            ctx.lineWidth = 1;
+            ctx.lineWidth = Math.max(1, Math.round(1 * targetScale));
             ctx.beginPath();
-            ctx.arc(target.x, target.y, TARGET_RADIUS + (PERFECT_W / GOOD_W) * 30, 0, Math.PI * 2);
+            ctx.arc(target.x, target.y, TARGET_RADIUS + Math.round((PERFECT_W / GOOD_W) * 30 * targetScale), 0, Math.PI * 2);
             ctx.stroke();
             
             ctx.strokeStyle = 'rgb(220, 200, 60)';
             ctx.beginPath();
-            ctx.arc(target.x, target.y, TARGET_RADIUS + 30, 0, Math.PI * 2);
+            ctx.arc(target.x, target.y, TARGET_RADIUS + Math.round(30 * targetScale), 0, Math.PI * 2);
             ctx.stroke();
             
             // Show target score if enabled in config
             if (LOG_CONFIG.TARGET_SCORES) {
+                const scoreScale = (WIDTH + HEIGHT) / 2000;
+                const scoreFontSize = Math.round(16 * scoreScale);
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                ctx.font = 'bold 16px Arial';
+                ctx.font = `bold ${scoreFontSize}px Arial`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 const scoreText = target.score.toString();
                 const textMetrics = ctx.measureText(scoreText);
                 const textWidth = textMetrics.width;
-                const textHeight = 16;
-                const padding = 6;
+                const textHeight = scoreFontSize;
+                const scorePadding = Math.round(6 * scoreScale);
                 const bgX = target.x;
-                const bgY = target.y + TARGET_RADIUS + 25;
+                const bgY = target.y + TARGET_RADIUS + Math.round(25 * scoreScale);
                 
                 // Draw background rectangle
-                ctx.fillRect(bgX - textWidth / 2 - padding, bgY - textHeight / 2 - padding / 2, textWidth + padding * 2, textHeight + padding);
+                ctx.fillRect(bgX - textWidth / 2 - scorePadding, bgY - textHeight / 2 - scorePadding / 2, textWidth + scorePadding * 2, textHeight + scorePadding);
                 
                 // Draw score text
                 ctx.fillStyle = target.color;
@@ -582,20 +710,25 @@ function gameLoop() {
             if (target.markers.length > 0 && hasEnoughData) {
                 const targetIndex = targets.indexOf(target);
                 // Map target indices to keys
-                const keyLabels = ['W', 'S', 'A', 'D', '↑', '↓', '←', '→'];
+                const keyLabels = ['W', 'S', 'A', '↑', '↓', '→'];
                 const keyLabel = keyLabels[targetIndex];
+                
+                const keyScale = (WIDTH + HEIGHT) / 2000;
+                const keyRadius = Math.round(14 * keyScale);
+                const keyOffset = Math.round(15 * keyScale);
+                const keyFontSize = Math.round(18 * keyScale);
                 
                 // Draw key label with background for better visibility
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
                 ctx.beginPath();
-                ctx.arc(target.x, target.y - TARGET_RADIUS - 15, 14, 0, Math.PI * 2);
+                ctx.arc(target.x, target.y - TARGET_RADIUS - keyOffset, keyRadius, 0, Math.PI * 2);
                 ctx.fill();
                 
                 ctx.fillStyle = 'rgb(255, 255, 255)';
-                ctx.font = 'bold 18px Arial';
+                ctx.font = `bold ${keyFontSize}px Arial`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(keyLabel, target.x, target.y - TARGET_RADIUS - 15);
+                ctx.fillText(keyLabel, target.x, target.y - TARGET_RADIUS - keyOffset);
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'alphabetic';
             }
@@ -614,32 +747,38 @@ function gameLoop() {
         }
     }
     
-    // UI text
+    // UI text - scale font sizes with canvas
+    const scale = (WIDTH + HEIGHT) / 2000;  // Scale factor based on average dimension
+    const fontSize1 = Math.round(28 * scale);
+    const fontSize2 = Math.round(44 * scale);
+    const fontSize3 = Math.round(72 * scale);
+    const padding = Math.round(20 * scale);
+    
     ctx.fillStyle = 'rgb(230, 230, 240)';
-    ctx.font = '28px Arial';
+    ctx.font = `${fontSize1}px Arial`;
     
     // Display hypersmoothed BPM
     const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
     const bpmText = hyperBPM !== null && hyperBPM > 0 ? hyperBPM.toFixed(1) : '---';
     const info = `BPM: ${bpmText} | Targets: ${targets.length} | Markers: ${markers.length} | Combo: ${combo}`;
-    ctx.fillText(info, 20, 30);
+    ctx.fillText(info, padding, padding + fontSize1);
     
     if (lastResult) {
-        ctx.font = '44px Arial';
+        ctx.font = `${fontSize2}px Arial`;
         const resultText = lastResult;
-        ctx.fillText(resultText, 20, 70);
+        ctx.fillText(resultText, padding, padding + fontSize1 + fontSize2);
     }
     
     // Display celebration text if active
     if (celebrationText && t < celebrationTextTime) {
-        ctx.font = 'bold 72px Arial';
+        ctx.font = `bold ${fontSize3}px Arial`;
         ctx.fillStyle = 'rgb(255, 215, 0)';  // Gold color
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         
         // Add glow effect with multiple strokes
         ctx.strokeStyle = 'rgba(255, 215, 0, 0.8)';
-        ctx.lineWidth = 8;
+        ctx.lineWidth = Math.round(8 * scale);
         ctx.strokeText(celebrationText, WIDTH / 2, HEIGHT / 2);
         
         ctx.fillText(celebrationText, WIDTH / 2, HEIGHT / 2);
@@ -654,14 +793,14 @@ function gameLoop() {
     
     // Display "listening" text if we don't have enough data (styled like celebration text)
     if (!hasEnoughData) {
-        ctx.font = 'bold 72px Arial';
+        ctx.font = `bold ${fontSize3}px Arial`;
         ctx.fillStyle = 'rgb(255, 215, 0)';  // Gold color (same as celebration)
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         
         // Add glow effect with multiple strokes
         ctx.strokeStyle = 'rgba(255, 215, 0, 0.8)';
-        ctx.lineWidth = 8;
+        ctx.lineWidth = Math.round(8 * scale);
         ctx.strokeText('listening', WIDTH / 2, HEIGHT / 2);
         
         ctx.fillText('listening', WIDTH / 2, HEIGHT / 2);
@@ -670,9 +809,9 @@ function gameLoop() {
         ctx.textBaseline = 'alphabetic';
     }
     
-    ctx.font = '28px Arial';
+    ctx.font = `${fontSize1}px Arial`;
     ctx.fillStyle = 'rgb(170, 170, 190)';
-    ctx.fillText('Click on targets or press WASD / Arrow keys to hit them', 20, HEIGHT - 20);
+    ctx.fillText('Click on targets or press WASD / Arrow keys to hit them', padding, HEIGHT - padding);
     
     requestAnimationFrame(gameLoop);
 }
@@ -683,7 +822,7 @@ function gameLoop() {
 
 // Function to handle hitting a target by index (0-7) or by mouse position
 function hitTarget(targetIndex = null, mouseX = null, mouseY = null) {
-    const yellowRadius = TARGET_RADIUS + 30;
+    const yellowRadius = getYellowRadius();
     let clickedTarget = null;
     
     if (targetIndex !== null && targetIndex >= 0 && targetIndex < targets.length) {
@@ -797,19 +936,34 @@ function hitTarget(targetIndex = null, mouseX = null, mouseY = null) {
     }
 }
 
+// Helper function to get click/touch position relative to canvas
+function getCanvasPosition(event) {
+    const rect = canvas.getBoundingClientRect();
+    const x = (event.clientX || event.touches?.[0]?.clientX || event.changedTouches?.[0]?.clientX) - rect.left;
+    const y = (event.clientY || event.touches?.[0]?.clientY || event.changedTouches?.[0]?.clientY) - rect.top;
+    return [x, y];
+}
+
 // Mouse click handler
 canvas.addEventListener('click', (event) => {
-    // Get mouse position relative to canvas
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = event.clientX - rect.left;
-    const mouseY = event.clientY - rect.top;
-    
+    const [mouseX, mouseY] = getCanvasPosition(event);
     hitTarget(null, mouseX, mouseY);
 });
 
+// Touch event handlers for touchscreen support
+canvas.addEventListener('touchstart', (event) => {
+    event.preventDefault(); // Prevent default touch behavior (scrolling, etc.)
+    const [touchX, touchY] = getCanvasPosition(event);
+    hitTarget(null, touchX, touchY);
+});
+
+canvas.addEventListener('touchend', (event) => {
+    event.preventDefault(); // Prevent default touch behavior
+});
+
 // Keyboard handler for WASD and Arrow keys
-// Left group (0-3): W (top), S (bottom), A (left), D (right)
-// Right group (4-7): Arrow Up (top), Arrow Down (bottom), Arrow Left (left), Arrow Right (right)
+// Left group (0-2): W (top), S (bottom), A (left)
+// Right group (3-5): Arrow Up (top), Arrow Down (bottom), Arrow Right (right)
 window.addEventListener('keydown', (event) => {
     let targetIndex = null;
     
@@ -821,18 +975,14 @@ window.addEventListener('keydown', (event) => {
         targetIndex = 1; // Left group, Bottom
     } else if (key === 'a') {
         targetIndex = 2; // Left group, Left
-    } else if (key === 'd') {
-        targetIndex = 3; // Left group, Right
     }
     // Handle Arrow keys
     else if (event.code === 'ArrowUp') {
-        targetIndex = 4; // Right group, Top
+        targetIndex = 3; // Right group, Top
     } else if (event.code === 'ArrowDown') {
-        targetIndex = 5; // Right group, Bottom
-    } else if (event.code === 'ArrowLeft') {
-        targetIndex = 6; // Right group, Left
+        targetIndex = 4; // Right group, Bottom
     } else if (event.code === 'ArrowRight') {
-        targetIndex = 7; // Right group, Right
+        targetIndex = 5; // Right group, Right
     }
     
     if (targetIndex !== null) {
@@ -843,8 +993,9 @@ window.addEventListener('keydown', (event) => {
 // Start listening on page load
 window.addEventListener('load', () => {
     log('GAME', '🎮 [GAME] Page loaded, initializing game...');
+    // Ensure canvas is initialized before starting
+    initializeCanvas();
     startListening();
+    // Start the game loop after initialization
+    gameLoop();
 });
-
-// Start the game loop
-gameLoop();

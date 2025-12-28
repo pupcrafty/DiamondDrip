@@ -42,9 +42,10 @@ class Target {
     getHitResult(markerX, markerY) {
         // Position-based scoring: check from inner to outer circles
         // Define circle radii
-        const blueRadius = TARGET_RADIUS;  // 28
-        const greenRadius = TARGET_RADIUS + (PERFECT_W / GOOD_W) * 30;  // ~43
-        const yellowRadius = TARGET_RADIUS + 30;  // 58
+        const scale = getScaleFactor();
+        const blueRadius = TARGET_RADIUS;
+        const greenRadius = TARGET_RADIUS + Math.round((PERFECT_W / GOOD_W) * 30 * scale);
+        const yellowRadius = getYellowRadius();
         
         // PERFECT: marker entirely in blue circle
         if (this.isMarkerEntirelyIn(markerX, markerY, blueRadius)) {

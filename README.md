@@ -21,6 +21,26 @@ Or use a local server (recommended for development):
 - Python: `python -m http.server 8000` then open `http://localhost:8000`
 - Node.js: `npx http-server` then open the provided URL
 
+### Accessing from Another Device on Local Network
+
+To play the game on another device (phone, tablet, another computer) on the same network:
+
+1. **Start the server** (choose one method):
+   - **Easy way**: Double-click `start-server.bat` (Windows)
+   - **Python**: `python -m http.server 8000 --bind 0.0.0.0`
+   - **Node.js**: `npx http-server -p 8000 -a 0.0.0.0`
+
+2. **Find your computer's local IP address**:
+   - **Windows**: Open PowerShell and run `ipconfig`, look for "IPv4 Address" under your active network adapter (usually starts with 192.168.x.x or 10.x.x.x)
+   - **Mac/Linux**: Run `ifconfig` or `ip addr` and look for your local IP
+
+3. **On the other device**:
+   - Make sure it's connected to the same Wi-Fi/network
+   - Open a web browser and go to: `http://YOUR_IP_ADDRESS:8000`
+   - Example: If your IP is `192.168.1.100`, go to `http://192.168.1.100:8000`
+
+**Note**: Make sure your firewall allows incoming connections on port 8000 if you have issues connecting.
+
 ## Controls
 
 - **SPACE** - Hit the beat

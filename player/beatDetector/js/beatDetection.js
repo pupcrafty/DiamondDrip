@@ -23,7 +23,12 @@ async function initBeatDetection(onBeat, onDiagnostic = null) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     log('BEAT', '🎵 [BEAT] AudioContext created, initial state:', audioCtx.state);
     
-    await audioCtx.audioWorklet.addModule('beat-worklet.js');
+    // Determine worklet path based on current document location
+    // Paths are relative to the HTML document, not the script file
+    const workletPath = window.location.pathname.includes('/beatDetector/') 
+        ? 'js/beat-worklet.js' 
+        : '../beatDetector/js/beat-worklet.js';
+    await audioCtx.audioWorklet.addModule(workletPath);
 
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     log('BEAT', '🎵 [BEAT] getUserMedia granted, AudioContext state:', audioCtx.state);

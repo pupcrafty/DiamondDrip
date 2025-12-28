@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Legacy Beat Detector - Statistics</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: #80b0ff;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .controls {
+            background-color: rgba(26, 26, 36, 0.8);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #333;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 0 10px 10px 0;
+            transition: background-color 0.2s;
+        }
+        
+        button:hover:not(:disabled) {
+            background-color: #5aa0f2;
+        }
+        
+        button:disabled {
+            background-color: #444;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background-color: rgba(26, 26, 36, 0.8);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #333;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(74, 144, 226, 0.2);
+        }
+        
+        .stat-card.beat-active {
+            border-color: #44ff44;
+            box-shadow: 0 0 20px rgba(68, 255, 68, 0.3);
+            animation: beatPulse 0.3s ease-out;
+        }
+        
+        @keyframes beatPulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+        
+        .stat-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #80b0ff;
+            margin-bottom: 5px;
+        }
+        
+        .stat-unit {
+            font-size: 14px;
+            color: #666;
+            margin-left: 5px;
+        }
+        
+        .stat-subvalue {
+            font-size: 14px;
+            color: #aaa;
+            margin-top: 5px;
+        }
+        
+        .energy-visualization {
+            background-color: rgba(26, 26, 36, 0.8);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #333;
+            margin-bottom: 20px;
+        }
+        
+        .energy-visualization h2 {
+            margin-top: 0;
+            color: #80b0ff;
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+        
+        .energy-bar-container {
+            position: relative;
+            height: 40px;
+            background-color: #0a0a12;
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        
+        .energy-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4a90e2 0%, #80b0ff 50%, #ff66aa 100%);
+            transition: width 0.1s linear;
+            border-radius: 6px;
+        }
+        
+        .energy-bar.beat {
+            background: linear-gradient(90deg, #44ff44 0%, #66ff66 50%, #88ff88 100%);
+            box-shadow: 0 0 10px rgba(68, 255, 68, 0.5);
+        }
+        
+        .energy-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .threshold-line {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background-color: #ff66aa;
+            opacity: 0.7;
+        }
+        
+        .settings {
+            background-color: rgba(26, 26, 36, 0.8);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #333;
+        }
+        
+        .settings h2 {
+            margin-top: 0;
+            color: #80b0ff;
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+        
+        .setting-item {
+            margin-bottom: 15px;
+        }
+        
+        .setting-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .setting-label span {
+            color: #aaa;
+            font-size: 14px;
+        }
+        
+        .setting-label .value {
+            color: #80b0ff;
+            font-weight: bold;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: #0a0a12;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #4a90e2;
+            cursor: pointer;
+        }
+        
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #4a90e2;
+            cursor: pointer;
+            border: none;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .status.idle {
+            background-color: rgba(255, 255, 255, 0.1);
+            color: #aaa;
+        }
+        
+        .status.running {
+            background-color: rgba(68, 255, 68, 0.2);
+            color: #44ff44;
+        }
+        
+        .status.error {
+            background-color: rgba(255, 68, 68, 0.2);
+            color: #ff4444;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 Legacy Beat Detector</h1>
+        <p class="subtitle">Compatible with older iOS and browsers | <a href="microphoneInfo.html" style="color: #80b0ff;">View API Detection</a></p>
+        
+        <div class="controls">
+            <button id="startBtn">Start Detection</button>
+            <button id="stopBtn" disabled>Stop Detection</button>
+        </div>
+        
+        <div class="status idle" id="status">Ready to start</div>
+        
+        <div class="stats-grid">
+            <div class="stat-card" id="energyCard">
+                <div class="stat-label">Current Energy</div>
+                <div class="stat-value" id="energyValue">0</div>
+                <div class="stat-subvalue">Bass frequency sum</div>
+            </div>
+            
+            <div class="stat-card" id="averageCard">
+                <div class="stat-label">Average Energy</div>
+                <div class="stat-value" id="averageValue">0</div>
+                <div class="stat-subvalue">Rolling average</div>
+            </div>
+            
+            <div class="stat-card" id="beatCard">
+                <div class="stat-label">Beat Detected</div>
+                <div class="stat-value" id="beatValue">No</div>
+                <div class="stat-subvalue" id="beatTime">-</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">Beat Count</div>
+                <div class="stat-value" id="beatCountValue">0</div>
+                <div class="stat-subvalue">Total beats detected</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">Estimated BPM</div>
+                <div class="stat-value" id="bpmValue">-</div>
+                <div class="stat-subvalue">Beats per minute</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-label">Threshold</div>
+                <div class="stat-value" id="thresholdValue">0</div>
+                <div class="stat-subvalue">Average × Sensitivity</div>
+            </div>
+        </div>
+        
+        <div class="energy-visualization">
+            <h2>Energy Visualization</h2>
+            <div class="energy-bar-container" id="energyBarContainer">
+                <div class="energy-bar" id="energyBar" style="width: 0%"></div>
+                <div class="threshold-line" id="thresholdLine" style="left: 0%"></div>
+            </div>
+            <div class="energy-labels">
+                <span>0</span>
+                <span>50%</span>
+                <span>100%</span>
+            </div>
+        </div>
+        
+        <div class="settings">
+            <h2>Settings</h2>
+            <div class="setting-item">
+                <div class="setting-label">
+                    <span>Sensitivity</span>
+                    <span class="value" id="sensitivityValue">1.3</span>
+                </div>
+                <input type="range" id="sensitivitySlider" min="0.5" max="3.0" step="0.1" value="1.3">
+            </div>
+        </div>
+    </div>
+    
+    <script src="js/legacyBeatDetector.js"></script>
+    <script>
+        // UI State
+        let isRunning = false;
+        let maxEnergy = 0;
+        let beatCardActive = false;
+        
+        // DOM Elements
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        const energyValue = document.getElementById('energyValue');
+        const averageValue = document.getElementById('averageValue');
+        const beatValue = document.getElementById('beatValue');
+        const beatTime = document.getElementById('beatTime');
+        const beatCountValue = document.getElementById('beatCountValue');
+        const bpmValue = document.getElementById('bpmValue');
+        const thresholdValue = document.getElementById('thresholdValue');
+        const energyBar = document.getElementById('energyBar');
+        const thresholdLine = document.getElementById('thresholdLine');
+        const energyCard = document.getElementById('energyCard');
+        const beatCard = document.getElementById('beatCard');
+        const sensitivitySlider = document.getElementById('sensitivitySlider');
+        const sensitivityValue = document.getElementById('sensitivityValue');
+        
+        // Update status
+        function updateStatus(text, className) {
+            status.textContent = text;
+            status.className = 'status ' + className;
+        }
+        
+        // Update UI with detection data
+        function updateUI(data) {
+            // Update energy values
+            energyValue.textContent = Math.round(data.energy);
+            averageValue.textContent = Math.round(data.average);
+            thresholdValue.textContent = Math.round(data.threshold);
+            
+            // Update beat detection
+            if (data.isBeat) {
+                beatValue.textContent = 'YES!';
+                beatValue.style.color = '#44ff44';
+                beatTime.textContent = 'Just now';
+                
+                // Pulse animation
+                beatCard.classList.add('beat-active');
+                setTimeout(() => {
+                    beatCard.classList.remove('beat-active');
+                }, 300);
+            } else {
+                beatValue.textContent = 'No';
+                beatValue.style.color = '#80b0ff';
+                const timeSinceBeat = data.time - (legacyBeatDetector.stats.lastBeatTime || 0);
+                if (timeSinceBeat < 1) {
+                    beatTime.textContent = (timeSinceBeat * 1000).toFixed(0) + 'ms ago';
+                } else {
+                    beatTime.textContent = '-';
+                }
+            }
+            
+            // Update beat count and BPM
+            const stats = legacyBeatDetector.getStats();
+            beatCountValue.textContent = stats.beatCount;
+            
+            if (stats.beatsPerMinute > 0) {
+                bpmValue.textContent = Math.round(stats.beatsPerMinute);
+            } else {
+                bpmValue.textContent = '-';
+            }
+            
+            // Update energy bar visualization
+            // Track max energy for scaling
+            if (data.energy > maxEnergy) {
+                maxEnergy = data.energy;
+            }
+            
+            // Normalize to 0-100% (use max of current energy or threshold * 2)
+            const maxDisplay = Math.max(maxEnergy, data.threshold * 2, 100);
+            const energyPercent = Math.min(100, (data.energy / maxDisplay) * 100);
+            const thresholdPercent = Math.min(100, (data.threshold / maxDisplay) * 100);
+            
+            energyBar.style.width = energyPercent + '%';
+            thresholdLine.style.left = thresholdPercent + '%';
+            
+            // Add beat class to bar
+            if (data.isBeat) {
+                energyBar.classList.add('beat');
+                setTimeout(() => {
+                    energyBar.classList.remove('beat');
+                }, 200);
+            }
+        }
+        
+        // Check browser compatibility
+        function checkBrowserSupport() {
+            // Log what's available for debugging
+            console.log('Browser compatibility check:');
+            console.log('  navigator.mediaDevices:', !!navigator.mediaDevices);
+            console.log('  navigator.mediaDevices.getUserMedia:', !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+            console.log('  navigator.getUserMedia:', !!navigator.getUserMedia);
+            console.log('  navigator.webkitGetUserMedia:', !!navigator.webkitGetUserMedia);
+            console.log('  navigator.mozGetUserMedia:', !!navigator.mozGetUserMedia);
+            console.log('  window.AudioContext:', !!window.AudioContext);
+            console.log('  window.webkitAudioContext:', !!window.webkitAudioContext);
+            console.log('  User agent:', navigator.userAgent);
+            
+            const hasMediaDevices = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+            const hasLegacyGetUserMedia = !!(navigator.getUserMedia || navigator.webkitGetUserMedia || 
+                                            navigator.mozGetUserMedia || navigator.msGetUserMedia);
+            const hasAudioContext = !!(window.AudioContext || window.webkitAudioContext);
+            
+            // For Safari and older browsers, be more lenient - allow if AudioContext exists
+            // The actual getUserMedia check will happen when the button is clicked
+            // This is because some browsers don't expose getUserMedia until user interaction
+            if (!hasAudioContext) {
+                updateStatus('Browser does not support Web Audio API', 'error');
+                startBtn.disabled = true;
+                console.error('No AudioContext support found');
+                return false;
+            }
+            
+            // If we have AudioContext, allow the button to be enabled
+            // The actual getUserMedia check will happen on button click
+            if (!hasMediaDevices && !hasLegacyGetUserMedia) {
+                // Still allow the button, but show a warning
+                updateStatus('Ready - Click Start to request microphone access', 'idle');
+                console.warn('getUserMedia not detected in navigator, but will try on button click');
+                // Don't disable the button - let it try
+                return true;
+            }
+            
+            updateStatus('Ready - Click Start to begin detection', 'idle');
+            return true;
+        }
+        
+        // Start detection
+        async function startDetection() {
+            try {
+                updateStatus('Requesting microphone permission...', 'idle');
+                startBtn.disabled = true; // Disable button while requesting
+                
+                await legacyBeatDetector.startDetection(
+                    // onBeat callback
+                    (beatData) => {
+                        console.log('BEAT!', beatData);
+                    },
+                    // onUpdate callback
+                    (data) => {
+                        updateUI(data);
+                    }
+                );
+                
+                isRunning = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                updateStatus('Detection running - Listening for beats...', 'running');
+                maxEnergy = 0; // Reset max energy
+                
+            } catch (error) {
+                console.error('Error starting detection:', error);
+                updateStatus('Error: ' + error.message, 'error');
+                
+                // Re-enable start button on error
+                startBtn.disabled = false;
+                
+                // Show alert with helpful message
+                let alertMessage = 'Error starting detection:\n\n' + error.message;
+                if (error.message.includes('permission')) {
+                    alertMessage += '\n\nPlease:\n1. Click "Allow" when prompted for microphone access\n2. Check your browser settings if no prompt appears\n3. Make sure your microphone is connected and working';
+                }
+                alert(alertMessage);
+            }
+        }
+        
+        // Stop detection
+        function stopDetection() {
+            legacyBeatDetector.stopDetection();
+            
+            isRunning = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            updateStatus('Stopped', 'idle');
+            
+            // Reset UI
+            energyValue.textContent = '0';
+            averageValue.textContent = '0';
+            beatValue.textContent = 'No';
+            beatValue.style.color = '#80b0ff';
+            beatTime.textContent = '-';
+            beatCountValue.textContent = '0';
+            bpmValue.textContent = '-';
+            thresholdValue.textContent = '0';
+            energyBar.style.width = '0%';
+            thresholdLine.style.left = '0%';
+            maxEnergy = 0;
+        }
+        
+        // Sensitivity slider
+        sensitivitySlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            legacyBeatDetector.setSensitivity(value);
+            sensitivityValue.textContent = value.toFixed(1);
+        });
+        
+        // Button handlers
+        startBtn.addEventListener('click', startDetection);
+        stopBtn.addEventListener('click', stopDetection);
+        
+        // Check browser support on page load
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                checkBrowserSupport();
+            });
+        } else {
+            checkBrowserSupport();
+        }
+        
+        // Handle page visibility (pause/resume)
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && isRunning) {
+                // Optionally pause when tab is hidden
+                // stopDetection();
+            }
+        });
+    </script>
+</body>
+</html>
+
