@@ -53,3 +53,4 @@ function log(category, ...args) {
 // Export LOG_CONFIG as a global for backward compatibility
 const LOG_CONFIG = logger.LOG_CONFIG;
 
+

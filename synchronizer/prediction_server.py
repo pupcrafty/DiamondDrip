@@ -322,37 +322,100 @@ class PredictionDatabase:
 # Global database instance
 db = None
 
+def certificate_needs_regeneration(cert_file, current_ip):
+    """Check if certificate needs to be regenerated (doesn't include current IP)"""
+    if not cert_file.exists() or current_ip == "localhost":
+        return False
+    
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.backends import default_backend
+        
+        # Read and parse certificate
+        with open(cert_file, 'rb') as f:
+            cert_data = f.read()
+        
+        cert = x509.load_pem_x509_certificate(cert_data, default_backend())
+        
+        # Check Subject Alternative Names
+        try:
+            san_ext = cert.extensions.get_extension_for_oid(x509.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
+            san = san_ext.value
+            
+            # Check if current IP is in the certificate
+            try:
+                current_ip_obj = ipaddress.IPv4Address(current_ip)
+                for name in san:
+                    if isinstance(name, x509.IPAddress):
+                        if name.value == current_ip_obj:
+                            return False  # IP is in certificate, no regeneration needed
+            except (ValueError, ipaddress.AddressValueError):
+                # Not a valid IP, skip IP check
+                pass
+            
+            # Current IP not found in certificate
+            print(f"Warning: Certificate does not include current IP ({current_ip})")
+            print("  Certificate will be regenerated to include current IP address")
+            return True
+        except x509.ExtensionNotFound:
+            # No SAN extension, should regenerate
+            print(f"Warning: Certificate missing Subject Alternative Names")
+            print("  Certificate will be regenerated to include current IP address")
+            return True
+    except ImportError:
+        # Cryptography not available, can't check - assume certificate is fine
+        return False
+    except Exception as e:
+        # If we can't check, assume it's fine (don't regenerate)
+        print(f"Note: Could not verify certificate IP coverage: {e}")
+        return False
+
 def get_ssl_context():
-    """Get SSL context, using player certificate if available, otherwise generating one"""
+    """Get SSL context, reusing player certificate if available, otherwise generating one"""
     script_dir = Path(__file__).parent
     player_dir = script_dir.parent / "player"
+    current_ip = get_local_ip()
     
-    # First, try to use certificate from player directory (same certificate)
+    # Try to reuse certificate from player directory first (so browser only needs to trust once)
     player_cert_file = player_dir / "server.crt"
     player_key_file = player_dir / "server.key"
     
+    # Local certificate files
+    cert_file = script_dir / "server.crt"
+    key_file = script_dir / "server.key"
+    
+    # Prefer player server certificate if it exists (reuse for consistency)
     if player_cert_file.exists() and player_key_file.exists():
-        # Use the same certificate as the player server
+        # Check if certificate needs regeneration (IP changed)
+        if certificate_needs_regeneration(player_cert_file, current_ip):
+            print(f"Regenerating certificate to include current IP ({current_ip})...")
+            # Regenerate in player directory (so both servers can use it)
+            if generate_self_signed_cert(player_cert_file, player_key_file):
+                print(f"✓ Certificate regenerated: {player_cert_file}")
+            else:
+                print("Warning: Failed to regenerate certificate, using existing one")
         cert_file = player_cert_file
         key_file = player_key_file
-        print(f"Using existing certificate from player directory")
+        print(f"Using certificate from player server: {cert_file}")
+    elif not cert_file.exists() or not key_file.exists():
+        print("No SSL certificate found. Generating self-signed certificate...")
+        if generate_self_signed_cert(cert_file, key_file):
+            print(f"✓ Certificate generated: {cert_file}")
+            print(f"✓ Private key generated: {key_file}")
+        else:
+            print("Error: Could not generate certificate.")
+            print("Please install 'cryptography' package:")
+            print("  pip install cryptography")
+            print("Or install OpenSSL and ensure it's in your PATH.")
+            sys.exit(1)
     else:
-        # Generate certificate in synchronizer directory
-        cert_file = script_dir / "server.crt"
-        key_file = script_dir / "server.key"
-        
-        # Check if certificate files exist
-        if not cert_file.exists() or not key_file.exists():
-            print("No SSL certificate found. Generating self-signed certificate...")
+        # Local certificate exists, check if it needs regeneration
+        if certificate_needs_regeneration(cert_file, current_ip):
+            print(f"Regenerating certificate to include current IP ({current_ip})...")
             if generate_self_signed_cert(cert_file, key_file):
-                print(f"✓ Certificate generated: {cert_file}")
-                print(f"✓ Private key generated: {key_file}")
+                print(f"✓ Certificate regenerated: {cert_file}")
             else:
-                print("Error: Could not generate certificate.")
-                print("Please install 'cryptography' package:")
-                print("  pip install cryptography")
-                print("Or install OpenSSL and ensure it's in your PATH.")
-                sys.exit(1)
+                print("Warning: Failed to regenerate certificate, using existing one")
     
     # Create SSL context
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

@@ -1,0 +1,4 @@
+# AWS Lambda requirements for DiamondDrip Prediction Server
+psycopg2-binary==2.9.9
+
+
