@@ -30,3 +30,4 @@ echo "Lambda package created: lambda-package.zip"
 echo "Package size: $(du -h lambda-package.zip | cut -f1)"
 
 
+

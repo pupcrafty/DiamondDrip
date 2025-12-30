@@ -1,0 +1,376 @@
+{
+  "scripts": {
+    "deploy-stacks.py": {
+      "description": "Deploy DiamondDrip infrastructure using modular stacks",
+      "arguments": {
+        "--stack, -s": {
+          "type": "multiple",
+          "choices": ["network", "database", "application", "frontend"],
+          "description": "Deploy specific stack(s). Can be used multiple times to deploy multiple stacks.",
+          "required": false,
+          "default": null
+        },
+        "--all, -a": {
+          "type": "flag",
+          "description": "Deploy all stacks, ignoring state file",
+          "required": false,
+          "default": false
+        },
+        "--reset, -r": {
+          "type": "flag",
+          "description": "Reset deployment state file before deploying",
+          "required": false,
+          "default": false
+        },
+        "--project, -p": {
+          "type": "string",
+          "description": "Project name",
+          "required": false,
+          "default": "diamonddrip (or PROJECT_NAME env var)"
+        },
+        "--env, -e": {
+          "type": "string",
+          "description": "Environment (development/staging/production)",
+          "required": false,
+          "default": "production (or ENVIRONMENT env var)"
+        },
+        "--region, -r": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1 (or AWS_REGION env var)"
+        }
+      },
+      "examples": [
+        "python deploy-stacks.py",
+        "python deploy-stacks.py --all",
+        "python deploy-stacks.py --stack network",
+        "python deploy-stacks.py --stack network --stack database",
+        "python deploy-stacks.py --reset --all"
+      ],
+      "notes": [
+        "Automatically generates and saves database password to database-password-{project}-{env}.txt",
+        "Tracks deployment state in deployment-state-{project}-{env}.json",
+        "Deploys stacks in order: network -> database -> application -> frontend"
+      ]
+    },
+    "cleanup-stacks.py": {
+      "description": "Clean up DiamondDrip CloudFormation stacks. By default, only deletes failed stacks from state file.",
+      "arguments": {
+        "--all, -a": {
+          "type": "flag",
+          "description": "Delete all stacks (ignores state file)",
+          "required": false,
+          "default": false
+        },
+        "--stack, -s": {
+          "type": "string",
+          "description": "Delete a single specific stack by name",
+          "required": false,
+          "default": null
+        },
+        "--project, -p": {
+          "type": "string",
+          "description": "Project name",
+          "required": false,
+          "default": "diamonddrip (or PROJECT_NAME env var)"
+        },
+        "--env, -e": {
+          "type": "string",
+          "description": "Environment",
+          "required": false,
+          "default": "production (or ENVIRONMENT env var)"
+        },
+        "--region, -r": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1 (or AWS_REGION env var)"
+        }
+      },
+      "examples": [
+        "python cleanup-stacks.py",
+        "python cleanup-stacks.py --all",
+        "python cleanup-stacks.py --stack diamonddrip-production-frontend",
+        "python cleanup-stacks.py --project myapp --env staging"
+      ],
+      "notes": [
+        "Default behavior: Only deletes stacks marked as 'failed' in deployment-state-{project}-{env}.json",
+        "With --all: Deletes all stacks regardless of state",
+        "With --stack: Deletes a single specific stack by name (no dependency ordering)",
+        "Updates state file after deletion",
+        "Deletes stacks in reverse order: frontend -> application -> database -> network (unless using --stack)",
+        "No confirmation prompts - fully non-interactive"
+      ]
+    },
+    "fix-rollback-failed.py": {
+      "description": "Fix ROLLBACK_FAILED CloudFormation stack by continuing rollback or skipping resources",
+      "arguments": {
+        "stack_name": {
+          "type": "positional",
+          "description": "CloudFormation stack name",
+          "required": true
+        },
+        "--action, -a": {
+          "type": "choice",
+          "choices": ["continue", "force-delete", "show-events"],
+          "description": "Action to take",
+          "required": false,
+          "default": "continue"
+        },
+        "--region": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1"
+        },
+        "--skip-resources": {
+          "type": "multiple",
+          "description": "Resource logical IDs to skip during rollback (space-separated)",
+          "required": false,
+          "default": null
+        }
+      },
+      "examples": [
+        "python fix-rollback-failed.py diamonddrip-production --action continue",
+        "python fix-rollback-failed.py diamonddrip-production --action force-delete",
+        "python fix-rollback-failed.py diamonddrip-production --action show-events",
+        "python fix-rollback-failed.py diamonddrip-production --action continue --skip-resources Database"
+      ],
+      "notes": [
+        "Designed specifically for stacks in ROLLBACK_FAILED state",
+        "No confirmation prompts - fully non-interactive",
+        "'continue' action: Attempts to continue the rollback operation",
+        "'force-delete' action: Force deletes stack by skipping blocking resources",
+        "'show-events' action: Shows detailed stack events and exits"
+      ]
+    },
+    "diagnose-stacks.py": {
+      "description": "Diagnose CloudFormation stack failures by analyzing stack events",
+      "arguments": {
+        "--stack, -s": {
+          "type": "choice",
+          "choices": ["network", "database", "application", "frontend"],
+          "description": "Diagnose specific stack by type",
+          "required": false,
+          "default": null
+        },
+        "--stack-name": {
+          "type": "string",
+          "description": "Diagnose stack by exact name",
+          "required": false,
+          "default": null
+        },
+        "--failed-only, -f": {
+          "type": "flag",
+          "description": "Only diagnose failed stacks",
+          "required": false,
+          "default": false
+        },
+        "--verbose, -v": {
+          "type": "flag",
+          "description": "Show detailed timeline and all events",
+          "required": false,
+          "default": false
+        },
+        "--project, -p": {
+          "type": "string",
+          "description": "Project name",
+          "required": false,
+          "default": "diamonddrip (or PROJECT_NAME env var)"
+        },
+        "--env, -e": {
+          "type": "string",
+          "description": "Environment",
+          "required": false,
+          "default": "production (or ENVIRONMENT env var)"
+        },
+        "--region, -r": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1 (or AWS_REGION env var)"
+        },
+        "--export": {
+          "type": "flag",
+          "description": "Export events to JSON file",
+          "required": false,
+          "default": false
+        }
+      },
+      "examples": [
+        "python diagnose-stacks.py",
+        "python diagnose-stacks.py --stack network",
+        "python diagnose-stacks.py --stack database --verbose",
+        "python diagnose-stacks.py --failed-only",
+        "python diagnose-stacks.py --export"
+      ],
+      "notes": [
+        "Categorizes errors (permissions, limits, conflicts, timeouts)",
+        "Provides troubleshooting tips based on error type",
+        "Shows resource creation timeline when --verbose is used",
+        "Exports events to JSON when --export is used"
+      ]
+    },
+    "check-stacks-status.py": {
+      "description": "Check status of all DiamondDrip CloudFormation stacks",
+      "arguments": {
+        "--watch, -w": {
+          "type": "optional_int",
+          "description": "Watch mode - continuously monitor stacks. Optional interval in seconds (default: 30)",
+          "required": false,
+          "default": null
+        },
+        "--project, -p": {
+          "type": "string",
+          "description": "Project name",
+          "required": false,
+          "default": "diamonddrip (or PROJECT_NAME env var)"
+        },
+        "--env, -e": {
+          "type": "string",
+          "description": "Environment",
+          "required": false,
+          "default": "production (or ENVIRONMENT env var)"
+        },
+        "--region, -r": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1 (or AWS_REGION env var)"
+        }
+      },
+      "examples": [
+        "python check-stacks-status.py",
+        "python check-stacks-status.py --watch",
+        "python check-stacks-status.py --watch 10",
+        "python check-stacks-status.py --project myapp --env staging"
+      ],
+      "notes": [
+        "Lists all stacks grouped by status (In Progress, Completed, Failed, Other)",
+        "Shows detailed status for in-progress stacks",
+        "Watch mode continuously monitors and updates every 30 seconds (or specified interval)",
+        "Press Ctrl+C to exit watch mode"
+      ]
+    },
+    "upload-player-client.py": {
+      "description": "Upload player client files to S3 bucket",
+      "arguments": {
+        "--bucket": {
+          "type": "string",
+          "description": "S3 bucket name (auto-detected from stack if not provided)",
+          "required": false,
+          "default": null
+        },
+        "--stack-name": {
+          "type": "string",
+          "description": "CloudFormation stack name (for auto-detecting bucket)",
+          "required": false,
+          "default": "diamonddrip-production"
+        },
+        "--region": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1"
+        },
+        "--api-endpoint": {
+          "type": "string",
+          "description": "API Gateway endpoint (auto-detected from stack if not provided)",
+          "required": false,
+          "default": null
+        },
+        "--invalidate": {
+          "type": "flag",
+          "description": "Invalidate CloudFront cache after upload",
+          "required": false,
+          "default": false
+        }
+      },
+      "examples": [
+        "python upload-player-client.py",
+        "python upload-player-client.py --stack-name diamonddrip-production",
+        "python upload-player-client.py --bucket my-bucket --invalidate",
+        "python upload-player-client.py --api-endpoint https://api.example.com"
+      ],
+      "notes": [
+        "Maintains directory structure for relative paths",
+        "Auto-detects bucket name from CloudFormation stack outputs if --bucket not provided",
+        "Auto-detects API endpoint from stack outputs if --api-endpoint not provided",
+        "Updates client configuration files with API endpoint"
+      ]
+    },
+    "update-client-config.py": {
+      "description": "Update client configuration files with new API endpoint",
+      "arguments": {
+        "--stack-name": {
+          "type": "string",
+          "description": "CloudFormation stack name (to get API endpoint from)",
+          "required": false,
+          "default": "diamonddrip-production"
+        },
+        "--endpoint": {
+          "type": "string",
+          "description": "API endpoint URL (overrides stack lookup)",
+          "required": false,
+          "default": null
+        },
+        "--region": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1"
+        }
+      },
+      "examples": [
+        "python update-client-config.py",
+        "python update-client-config.py --stack-name diamonddrip-production",
+        "python update-client-config.py --endpoint https://api.example.com"
+      ],
+      "notes": [
+        "Updates PREDICTION_SERVER_URL in client JavaScript files",
+        "If --endpoint is provided, uses that instead of looking up from stack",
+        "Updates files: player/playerClient/js/game.js and diagnostics files"
+      ]
+    }
+  },
+  "common_environment_variables": {
+    "PROJECT_NAME": {
+      "description": "Project name (used by deploy-stacks.py, cleanup-stacks.py, diagnose-stacks.py, check-stacks-status.py)",
+      "default": "diamonddrip"
+    },
+    "ENVIRONMENT": {
+      "description": "Environment name (used by deploy-stacks.py, cleanup-stacks.py, diagnose-stacks.py, check-stacks-status.py)",
+      "default": "production"
+    },
+    "AWS_REGION": {
+      "description": "AWS region (used by deploy-stacks.py, cleanup-stacks.py, diagnose-stacks.py, check-stacks-status.py)",
+      "default": "us-east-1"
+    },
+    "DB_USERNAME": {
+      "description": "Database username (used by deploy-stacks.py)",
+      "default": "diamonddrip_admin"
+    },
+    "DB_INSTANCE_CLASS": {
+      "description": "RDS instance class (used by deploy-stacks.py)",
+      "default": "db.t3.micro"
+    },
+    "DB_STORAGE": {
+      "description": "RDS allocated storage in GB (used by deploy-stacks.py)",
+      "default": "20"
+    }
+  },
+  "generated_files": {
+    "database-password-{project}-{env}.txt": {
+      "description": "Auto-generated database password file (gitignored)",
+      "generated_by": "deploy-stacks.py",
+      "permissions": "600 (owner read/write only)"
+    },
+    "deployment-state-{project}-{env}.json": {
+      "description": "Deployment state tracking file (gitignored)",
+      "generated_by": "deploy-stacks.py",
+      "used_by": ["deploy-stacks.py", "cleanup-stacks.py"]
+    }
+  }
+}
+

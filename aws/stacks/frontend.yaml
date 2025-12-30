@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DiamondDrip Frontend Infrastructure - S3 Bucket and CloudFront Distribution'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: diamonddrip
+    Description: Project name for resource naming
+  
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [development, staging, production]
+    Description: Deployment environment
+
+Resources:
+  # S3 Bucket for Player Client
+  PlayerClientBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-player-client'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-player-client'
+  
+  # S3 Bucket Policy for Public Read
+  PlayerClientBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PlayerClientBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${PlayerClientBucket}/*'
+  
+  # CloudFront Distribution
+  PlayerClientDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !Sub '${PlayerClientBucket}.s3-website-${AWS::Region}.amazonaws.com'
+            Id: S3Origin
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+        Enabled: true
+        DefaultRootObject: index.html
+        Comment: !Sub 'CloudFront distribution for ${ProjectName} player client'
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - DELETE
+            - GET
+            - HEAD
+            - OPTIONS
+            - PATCH
+            - POST
+            - PUT
+          TargetOriginId: S3Origin
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: redirect-to-https
+          MinTTL: 0
+          DefaultTTL: 3600
+          MaxTTL: 86400
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        PriceClass: PriceClass_100
+        HttpVersion: http2
+        IPV6Enabled: true
+
+Outputs:
+  PlayerClientBucketName:
+    Description: S3 bucket name for player client
+    Value: !Ref PlayerClientBucket
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-player-bucket'
+  
+  PlayerClientURL:
+    Description: CloudFront URL for player client
+    Value: !GetAtt PlayerClientDistribution.DomainName
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-player-url'
+  
+  PlayerClientDistributionId:
+    Description: CloudFront distribution ID
+    Value: !Ref PlayerClientDistribution
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-player-distribution-id'
+
+

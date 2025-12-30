@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DiamondDrip Database Infrastructure - RDS PostgreSQL Instance'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: diamonddrip
+    Description: Project name for resource naming
+  
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [development, staging, production]
+    Description: Deployment environment
+  
+  DatabaseInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: RDS instance class
+    AllowedValues: [db.t3.micro, db.t3.small, db.t3.medium, db.t4g.micro, db.t4g.small]
+  
+  DatabaseAllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: RDS allocated storage in GB
+    MinValue: 20
+    MaxValue: 100
+  
+  DatabaseMasterUsername:
+    Type: String
+    Default: diamonddrip_admin
+    Description: RDS master username
+    NoEcho: true
+  
+  DatabaseMasterPassword:
+    Type: String
+    NoEcho: true
+    Description: RDS master password (min 8 chars, must contain uppercase, lowercase, number)
+    MinLength: 8
+
+Conditions:
+  HasPassword: !Not [!Equals [!Ref DatabaseMasterPassword, '']]
+
+Resources:
+  # RDS Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for DiamondDrip RDS
+      SubnetIds:
+        - !ImportValue 
+          Fn::Sub: '${ProjectName}-${Environment}-private-subnet-1-id'
+        - !ImportValue 
+          Fn::Sub: '${ProjectName}-${Environment}-private-subnet-2-id'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-db-subnet-group'
+  
+  # RDS Database Instance
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub '${ProjectName}-${Environment}-db'
+      DBInstanceClass: !Ref DatabaseInstanceClass
+      Engine: postgres
+      EngineVersion: '15.15'
+      MasterUsername: !Ref DatabaseMasterUsername
+      MasterUserPassword: !Ref DatabaseMasterPassword
+      AllocatedStorage: !Ref DatabaseAllocatedStorage
+      StorageType: gp3
+      DBName: diamonddrip
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !ImportValue 
+          Fn::Sub: '${ProjectName}-${Environment}-db-sg-id'
+      BackupRetentionPeriod: 7
+      MultiAZ: false
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-database'
+  
+  # Secrets Manager for Database Credentials (optional, for secure storage)
+  DatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: HasPassword
+    Properties:
+      Name: !Sub '${ProjectName}/${Environment}/database'
+      Description: Database credentials for DiamondDrip
+      SecretString: !Sub |
+        {
+          "username": "${DatabaseMasterUsername}",
+          "password": "${DatabaseMasterPassword}",
+          "database": "diamonddrip"
+        }
+
+Outputs:
+  DatabaseEndpoint:
+    Description: RDS database endpoint
+    Value: !GetAtt Database.Endpoint.Address
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-db-endpoint'
+  
+  DatabasePort:
+    Description: RDS database port
+    Value: !GetAtt Database.Endpoint.Port
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-db-port'
+  
+  DatabaseSecretArn:
+    Description: Secrets Manager ARN for database credentials
+    Value: !If [HasPassword, !Ref DatabaseSecret, !Ref 'AWS::NoValue']
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-db-secret-arn'
+

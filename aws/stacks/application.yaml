@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DiamondDrip Application Infrastructure - Lambda, API Gateway'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: diamonddrip
+    Description: Project name for resource naming
+  
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [development, staging, production]
+    Description: Deployment environment
+  
+  DatabaseMasterUsername:
+    Type: String
+    Default: diamonddrip_admin
+    Description: RDS master username
+    NoEcho: true
+  
+  DatabaseMasterPassword:
+    Type: String
+    NoEcho: true
+    Description: RDS master password
+    MinLength: 8
+
+Conditions:
+  HasPassword: !Not [!Equals [!Ref DatabaseMasterPassword, '']]
+
+Resources:
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-${Environment}-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/${Environment}/database*'
+  
+  # Lambda Function
+  PredictionLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}-prediction-server'
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {'statusCode': 503, 'body': '{"error": "Lambda code not deployed. Run deploy script."}'}
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          DB_HOST: !ImportValue 
+            Fn::Sub: '${ProjectName}-${Environment}-db-endpoint'
+          DB_PORT: !ImportValue 
+            Fn::Sub: '${ProjectName}-${Environment}-db-port'
+          DB_NAME: diamonddrip
+          DB_USER: !Ref DatabaseMasterUsername
+          DB_PASSWORD: !Ref DatabaseMasterPassword
+          DB_SECRET_ARN: !If 
+            - HasPassword
+            - !ImportValue 
+              Fn::Sub: '${ProjectName}-${Environment}-db-secret-arn'
+            - !Ref 'AWS::NoValue'
+      VpcConfig:
+        SecurityGroupIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-${Environment}-lambda-sg-id'
+        SubnetIds:
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-${Environment}-private-subnet-1-id'
+          - !ImportValue 
+            Fn::Sub: '${ProjectName}-${Environment}-private-subnet-2-id'
+  
+  # API Gateway
+  ApiGateway:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ProjectName}-${Environment}-api'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+        MaxAge: 86400
+  
+  # API Gateway Integration
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PredictionLambda.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+  
+  # API Gateway Routes
+  ApiRoutePrediction:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /prediction'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  
+  ApiRouteStats:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /stats'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  
+  ApiRouteRecent:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /recent'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  
+  ApiRouteHealth:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /health'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  
+  ApiRouteRoot:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  
+  # API Gateway Stage
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ApiGateway
+      StageName: !Sub '${Environment}'
+      AutoDeploy: true
+  
+  # Lambda Permission for API Gateway
+  LambdaApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PredictionLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-api-endpoint'
+  
+  LambdaFunctionName:
+    Description: Lambda function name
+    Value: !Ref PredictionLambda
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-lambda-function-name'
+
