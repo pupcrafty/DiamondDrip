@@ -284,43 +284,31 @@ let lastPhraseStartTime = null; // Track when the current phrase started (for pr
 let lastPulseTime = -999; // Track last pulse time for gating
 const PULSE_GATE_TIME = 0.1; // Minimum time between pulses (100ms)
 
-// Initialize 6 targets in 2 groups of 3 in L shapes at the bottom
+// Initialize 3 targets (left, middle, right) at the bottom
 function initializeTargets() {
-    const yellowRadius = getYellowRadius();  // Outermost circle radius
-    const spacing = TARGET_RADIUS * 2.5;  // Distance between target centers in L shape (closer together)
-    
-    // Position groups at the bottom of the screen (moved up so bottom targets are fully visible)
     const scale = (WIDTH + HEIGHT) / 2000;
-    const bottomY = HEIGHT - Math.round(200 * scale);  // Distance from bottom (increased to show bottom targets fully)
-    const leftGroupX = WIDTH / 2.8;   // Left group center X (moved closer to center)
-    const rightGroupX = WIDTH / 1.75;  // Right group center X (moved closer to center)
+    const bottomY = HEIGHT - Math.round(200 * scale);  // Distance from bottom
     
-    // 6 easily visible colors
+    // Position 3 targets horizontally across the bottom
+    const leftX = WIDTH / 4;      // Left target
+    const middleX = WIDTH / 2;    // Middle target
+    const rightX = WIDTH * 3 / 4; // Right target
+    
+    // 3 easily visible colors
     const colors = [
-        'rgb(255, 70, 70)',    // Red
-        'rgb(70, 150, 255)',   // Blue
-        'rgb(70, 220, 140)',   // Green
-        'rgb(255, 220, 70)',   // Yellow
-        'rgb(255, 150, 70)',   // Orange
-        'rgb(200, 70, 255)'    // Purple
+        'rgb(255, 70, 70)',    // Red - Left
+        'rgb(70, 220, 140)',   // Green - Middle (sustained)
+        'rgb(70, 150, 255)'    // Blue - Right
     ];
     
-    // Left group: L shape (Top, Bottom, Left - no Right)
-    // Right group: L shape (Top, Bottom, Right - no Left)
     const positions = [
-        // Left group (indices 0-2)
-        [leftGroupX, bottomY - spacing],        // 0: Top
-        [leftGroupX, bottomY + spacing],        // 1: Bottom
-        [leftGroupX - spacing, bottomY],        // 2: Left
-        
-        // Right group (indices 3-5)
-        [rightGroupX, bottomY - spacing],       // 3: Top
-        [rightGroupX, bottomY + spacing],       // 4: Bottom
-        [rightGroupX + spacing, bottomY]        // 5: Right
+        [leftX, bottomY],      // 0: Left
+        [middleX, bottomY],    // 1: Middle
+        [rightX, bottomY]      // 2: Right
     ];
     
     targets = [];
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 3; i++) {
         const target = new Target(-1, positions[i][0], positions[i][1], colors[i]);
         targets.push(target);
     }
@@ -330,8 +318,9 @@ function initializeTargets() {
 initializeCanvas();
 log('GAME', '🎮 [GAME] Game initialized with', targets.length, 'targets');
 
-// Track which group to spawn marker for next (alternates between left=0 and right=1)
-let nextGroup = 0;  // 0 = left group (indices 0-2), 1 = right group (indices 3-5)
+// Track which side to spawn marker for next (alternates between left=0 and right=2)
+let nextSide = 0;  // 0 = left target, 2 = right target (for single beats)
+// Middle target (index 1) is used for sustained beats
 
 // -----------------------------
 // Beat Detection Integration
@@ -523,43 +512,25 @@ function gameLoop() {
             
             if (!spawnedPredictedBeats.has(beatKey) && beatInfo.time > t) {
                 // Spawn marker for this predicted beat
-                // Alternate between groups, randomly select target within that group
-                // Only select targets with score < 5
-                const currentGroup = nextGroup;  // Save current group for logging
-                const groupStart = currentGroup * 3;  // 0 for left group, 3 for right group
+                // Alternate between left (0) and right (2) for single beats
+                // Middle (1) is reserved for sustained beats
+                const currentSide = nextSide;  // Save current side for logging
                 
-                // Filter available targets (score < 5) in this group
-                const availableTargets = [];
-                for (let i = 0; i < 3; i++) {
-                    const idx = groupStart + i;
-                    if (targets[idx].score < 5) {
-                        availableTargets.push(idx);
+                // Check if target is available (score < 5)
+                let targetIndex = currentSide;
+                if (targets[targetIndex].score >= 5) {
+                    // If current side is complete, try the other side
+                    targetIndex = (currentSide === 0) ? 2 : 0;
+                    if (targets[targetIndex].score >= 5) {
+                        // Both sides complete, skip this marker
+                        continue;
                     }
                 }
                 
-                // If no available targets in this group, try the other group
-                if (availableTargets.length === 0) {
-                    const otherGroupStart = (currentGroup === 0) ? 3 : 0;
-                    for (let i = 0; i < 3; i++) {
-                        const idx = otherGroupStart + i;
-                        if (targets[idx].score < 5) {
-                            availableTargets.push(idx);
-                        }
-                    }
-                }
-                
-                // If still no available targets, skip this marker (all targets are complete)
-                if (availableTargets.length === 0) {
-                    continue;
-                }
-                
-                // Randomly select from available targets
-                const randomIndex = Math.floor(Math.random() * availableTargets.length);
-                const targetIndex = availableTargets[randomIndex];
                 const target = targets[targetIndex];
                 
-                // Alternate to the other group for next spawn
-                nextGroup = (nextGroup + 1) % 2;  // Toggle between 0 and 1
+                // Alternate to the other side for next spawn
+                nextSide = (nextSide === 0) ? 2 : 0;  // Toggle between 0 (left) and 2 (right)
                 
                 // Calculate top spawn position (at top of screen, same X as target)
                 const [topX, topY] = getTopSpawnPosition(target.x);
@@ -622,7 +593,8 @@ function gameLoop() {
                     target.beatDisappear = beatInfo.time;
                     
                     const actualFallTime = holdDuration === 0 ? totalTime : fallTime;
-                    log('GAME', '🎮 [GAME] 🎯 Marker spawned for predicted beat (Target:', targetIndex, 'Group:', currentGroup === 0 ? 'left' : 'right', 'Beat time:', beatInfo.time.toFixed(3), 's Total time:', totalTime.toFixed(2), 's Hold:', holdDuration.toFixed(2), 's Fall:', actualFallTime.toFixed(2), 's Speed:', actualSpeed.toFixed(1), 'px/s Distance:', distance.toFixed(1), 'px)');
+                    const sideName = targetIndex === 0 ? 'left' : targetIndex === 1 ? 'middle' : 'right';
+                    log('GAME', '🎮 [GAME] 🎯 Marker spawned for predicted beat (Target:', targetIndex, 'Side:', sideName, 'Beat time:', beatInfo.time.toFixed(3), 's Total time:', totalTime.toFixed(2), 's Hold:', holdDuration.toFixed(2), 's Fall:', actualFallTime.toFixed(2), 's Speed:', actualSpeed.toFixed(1), 'px/s Distance:', distance.toFixed(1), 'px)');
                 }
             }
         }
@@ -662,10 +634,10 @@ function gameLoop() {
     
     // Draw center star (behind targets) - grows with total score of all targets
     const starScale = (WIDTH + HEIGHT) / 2000;
-    const leftGroupX = WIDTH / 2.8;
-    const rightGroupX = WIDTH / 1.75;
     const bottomY = HEIGHT - Math.round(200 * starScale);
-    const centerX = (leftGroupX + rightGroupX) / 2;
+    const leftX = WIDTH / 4;
+    const rightX = WIDTH * 3 / 4;
+    const centerX = WIDTH / 2;
     const centerY = bottomY;
     
     // Calculate total score of all targets
@@ -674,10 +646,10 @@ function gameLoop() {
         totalScore += target.score;
     }
     
-    // Maximum total score is 6 targets * 5 = 30
-    // Maximum star radius should fill the space between groups
-    const maxTotalScore = 6 * 5;  // 30
-    const maxCenterStarRadius = (rightGroupX - leftGroupX) / 2;  // Half the distance between groups (fills the space)
+    // Maximum total score is 3 targets * 5 = 15
+    // Maximum star radius should fill the space between left and right targets
+    const maxTotalScore = 3 * 5;  // 15
+    const maxCenterStarRadius = (rightX - leftX) / 2;  // Half the distance between left and right targets
     
     if (totalScore > 0) {
         const centerStarRadius = (totalScore / maxTotalScore) * maxCenterStarRadius;
@@ -815,8 +787,8 @@ function gameLoop() {
             // Show key label if target has markers
             if (target.markers.length > 0 && hasEnoughData) {
                 const targetIndex = targets.indexOf(target);
-                // Map target indices to keys
-                const keyLabels = ['W', 'S', 'A', '↑', '↓', '→'];
+                // Map target indices to keys: Left (A/←), Middle (S/Space), Right (D/→)
+                const keyLabels = ['A', 'S', 'D'];
                 const keyLabel = keyLabels[targetIndex];
                 
                 const keyScale = (WIDTH + HEIGHT) / 2000;
@@ -917,7 +889,7 @@ function gameLoop() {
     
     ctx.font = `${fontSize1}px Arial`;
     ctx.fillStyle = 'rgb(170, 170, 190)';
-    ctx.fillText('Click on targets or press WASD / Arrow keys to hit them', padding, HEIGHT - padding);
+    ctx.fillText('Click on targets or press A (left) / S or Space (middle, hold) / D (right) to hit them', padding, HEIGHT - padding);
     
     requestAnimationFrame(gameLoop);
 }
@@ -1067,32 +1039,68 @@ canvas.addEventListener('touchend', (event) => {
     event.preventDefault(); // Prevent default touch behavior
 });
 
-// Keyboard handler for WASD and Arrow keys
-// Left group (0-2): W (top), S (bottom), A (left)
-// Right group (3-5): Arrow Up (top), Arrow Down (bottom), Arrow Right (right)
+// Track sustained press state for middle button
+let middleButtonHeld = false;
+let middleButtonHoldStartTime = null;
+let middleButtonCheckInterval = null;
+
+// Keyboard handler for 3-button system
+// Left (0): A or ArrowLeft - single beat
+// Middle (1): S or Space - sustained press
+// Right (2): D or ArrowRight - single beat
 window.addEventListener('keydown', (event) => {
     let targetIndex = null;
+    let isSustainedButton = false;
     
-    // Handle WASD keys (case insensitive)
+    // Handle keys (case insensitive)
     const key = event.key.toLowerCase();
-    if (key === 'w') {
-        targetIndex = 0; // Left group, Top
-    } else if (key === 's') {
-        targetIndex = 1; // Left group, Bottom
-    } else if (key === 'a') {
-        targetIndex = 2; // Left group, Left
-    }
-    // Handle Arrow keys
-    else if (event.code === 'ArrowUp') {
-        targetIndex = 3; // Right group, Top
-    } else if (event.code === 'ArrowDown') {
-        targetIndex = 4; // Right group, Bottom
-    } else if (event.code === 'ArrowRight') {
-        targetIndex = 5; // Right group, Right
+    if (key === 'a' || event.code === 'ArrowLeft') {
+        targetIndex = 0; // Left - single beat
+    } else if (key === 's' || event.code === 'Space') {
+        targetIndex = 1; // Middle - sustained press
+        isSustainedButton = true;
+        event.preventDefault(); // Prevent space from scrolling page
+    } else if (key === 'd' || event.code === 'ArrowRight') {
+        targetIndex = 2; // Right - single beat
     }
     
     if (targetIndex !== null) {
-        hitTarget(targetIndex);
+        if (isSustainedButton && !middleButtonHeld) {
+            // Start sustained press for middle button
+            middleButtonHeld = true;
+            middleButtonHoldStartTime = now();
+            
+            // Hit immediately on press
+            hitTarget(targetIndex);
+            
+            // Set up interval to check for hits while held (check every 50ms)
+            middleButtonCheckInterval = setInterval(() => {
+                if (middleButtonHeld) {
+                    hitTarget(targetIndex);
+                } else {
+                    clearInterval(middleButtonCheckInterval);
+                    middleButtonCheckInterval = null;
+                }
+            }, 50);
+        } else if (!isSustainedButton) {
+            // Single beat buttons - hit once on keydown
+            hitTarget(targetIndex);
+        }
+    }
+});
+
+// Handle keyup for sustained button release
+window.addEventListener('keyup', (event) => {
+    const key = event.key.toLowerCase();
+    if ((key === 's' || event.code === 'Space') && middleButtonHeld) {
+        // Release sustained press
+        event.preventDefault(); // Prevent space from scrolling page
+        middleButtonHeld = false;
+        middleButtonHoldStartTime = null;
+        if (middleButtonCheckInterval) {
+            clearInterval(middleButtonCheckInterval);
+            middleButtonCheckInterval = null;
+        }
     }
 });
 

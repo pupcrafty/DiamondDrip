@@ -146,12 +146,21 @@ def main():
     
     parser = argparse.ArgumentParser(description='Upload player client to S3')
     parser.add_argument('--bucket', help='S3 bucket name')
-    parser.add_argument('--stack-name', default='diamonddrip-production', help='CloudFormation stack name')
-    parser.add_argument('--region', default='us-east-1', help='AWS region')
+    parser.add_argument('--stack-name', help='CloudFormation stack name (auto-constructed from project/env if not provided)')
+    parser.add_argument('--project', '-p', default=os.environ.get('PROJECT_NAME', 'diamonddrip'),
+                       help='Project name (default: diamonddrip or PROJECT_NAME env var)')
+    parser.add_argument('--env', '-e', default=os.environ.get('ENVIRONMENT', 'production'),
+                       help='Environment (default: production or ENVIRONMENT env var)')
+    parser.add_argument('--region', '-r', default=os.environ.get('AWS_REGION', 'us-east-1'),
+                       help='AWS region (default: us-east-1 or AWS_REGION env var)')
     parser.add_argument('--api-endpoint', help='API Gateway endpoint (auto-detected if not provided)')
     parser.add_argument('--invalidate', action='store_true', help='Invalidate CloudFront cache')
     
     args = parser.parse_args()
+    
+    # Construct stack name from project and env if not provided
+    if not args.stack_name:
+        args.stack_name = f'{args.project}-{args.env}-frontend'
     
     # Get bucket name from stack if not provided
     if not args.bucket:
