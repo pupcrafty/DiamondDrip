@@ -29,6 +29,19 @@
     <canvas id="gameCanvas"></canvas>
     <script src="../beatDetector/js/logger.js"></script>
     <script src="../config/config.js"></script>
+    <script>
+        // Load version number synchronously before game loads
+        (async function() {
+            try {
+                const response = await fetch('../config/version.json');
+                const data = await response.json();
+                window.gameVersion = data.version || 1;
+            } catch (error) {
+                console.warn('Could not load version.json, using default version 1');
+                window.gameVersion = 1;
+            }
+        })();
+    </script>
     <script src="../beatDetector/js/bpmEstimator.js"></script>
     <script src="../beatDetector/js/energyClassifier.js"></script>
     <script src="../beatDetector/js/rhythmPredictor.js"></script>

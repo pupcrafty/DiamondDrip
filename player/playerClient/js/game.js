@@ -247,10 +247,12 @@ const ctx = canvas.getContext('2d');
 let targets = [];
 let markers = [];
 let combo = 0;
+let totalScore = 0;  // Global running score total
 let lastResult = "";
 let lastErrMs = 0;
-let celebrationText = null;  // Celebration text to display when all targets reach 5+
+let celebrationText = null;  // Celebration text to display
 let celebrationTextTime = 0;  // Time when celebration text should disappear
+let gameVersion = 1;  // Version number (loaded from version.json)
 
 // Initialize canvas size
 function initializeCanvas() {
@@ -318,9 +320,9 @@ function initializeTargets() {
 initializeCanvas();
 log('GAME', '🎮 [GAME] Game initialized with', targets.length, 'targets');
 
-// Track which side to spawn marker for next (alternates between left=0 and right=2)
-let nextSide = 0;  // 0 = left target, 2 = right target (for single beats)
+// Track sustained beats - no alternating logic needed
 // Middle target (index 1) is used for sustained beats
+// Left (0) and Right (2) targets are used for single beats
 
 // -----------------------------
 // Beat Detection Integration
@@ -445,32 +447,80 @@ function getPredictedBeatTimestamps(currentTime) {
         targetPhraseStart = nextPhraseStart + phraseDuration;
     }
     
-    // Generate timestamps ONLY from the predicted pattern
-    // Filter to only include beats on the first and third beat of the phrase
+    // Generate timestamps from the predicted pattern
+    // Detect sustained beats (consecutive active slots) vs single beats
     const timestamps = [];
+    const SUSTAINED_THRESHOLD = 4; // Minimum consecutive slots to be considered sustained (half a beat)
+    
+    // Group consecutive active slots together
+    let currentRun = [];
+    let runStartSlot = -1;
+    
     for (let slot = 0; slot < hyperPrediction.length; slot++) {
         if (hyperPrediction[slot]) {
-            // Check if this slot falls on the first or third beat
-            // Each beat has 8 slots (32nd notes), so:
-            // First beat: slots 0-7 (beat number 0)
-            // Second beat: slots 8-15 (beat number 1)
-            // Third beat: slots 16-23 (beat number 2)
-            // Fourth beat: slots 24-31 (beat number 3)
-            const beatNumber = Math.floor(slot / 8);
-            
-            // Only include slots on first beat (0) or third beat (2)
-            if (beatNumber === 0 || beatNumber === 2) {
-                const timeInPhrase = slot * thirtySecondNoteDuration;
-                const beatTime = targetPhraseStart + timeInPhrase;
+            if (currentRun.length === 0) {
+                runStartSlot = slot;
+            }
+            currentRun.push(slot);
+        } else {
+            // End of run - process it
+            if (currentRun.length > 0) {
+                const isSustained = currentRun.length >= SUSTAINED_THRESHOLD;
+                const startSlot = runStartSlot;
+                const endSlot = currentRun[currentRun.length - 1];
                 
-                // Only include future beats (at least 0.1 seconds in the future)
-                if (beatTime > currentTime + 0.1) {
-                    timestamps.push({
-                        time: beatTime,
-                        slot: slot,
-                        phraseStart: targetPhraseStart
-                    });
+                // Calculate timing for the start of the run
+                const beatNumber = Math.floor(startSlot / 8);
+                
+                // Include beats on first (0), second (1), third (2), or fourth (3) beat
+                if (beatNumber >= 0 && beatNumber <= 3) {
+                    const timeInPhrase = startSlot * thirtySecondNoteDuration;
+                    const beatTime = targetPhraseStart + timeInPhrase;
+                    
+                    // Calculate duration for sustained beats
+                    const duration = isSustained ? (endSlot - startSlot + 1) * thirtySecondNoteDuration : 0;
+                    
+                    // Only include future beats (at least 0.1 seconds in the future)
+                    if (beatTime > currentTime + 0.1) {
+                        timestamps.push({
+                            time: beatTime,
+                            slot: startSlot,
+                            phraseStart: targetPhraseStart,
+                            isSustained: isSustained,
+                            duration: duration,
+                            endSlot: endSlot
+                        });
+                    }
                 }
+                
+                currentRun = [];
+                runStartSlot = -1;
+            }
+        }
+    }
+    
+    // Handle run that extends to end of phrase
+    if (currentRun.length > 0) {
+        const isSustained = currentRun.length >= SUSTAINED_THRESHOLD;
+        const startSlot = runStartSlot;
+        const endSlot = currentRun[currentRun.length - 1];
+        
+        const beatNumber = Math.floor(startSlot / 8);
+        
+        if (beatNumber >= 0 && beatNumber <= 3) {
+            const timeInPhrase = startSlot * thirtySecondNoteDuration;
+            const beatTime = targetPhraseStart + timeInPhrase;
+            const duration = isSustained ? (endSlot - startSlot + 1) * thirtySecondNoteDuration : 0;
+            
+            if (beatTime > currentTime + 0.1) {
+                timestamps.push({
+                    time: beatTime,
+                    slot: startSlot,
+                    phraseStart: targetPhraseStart,
+                    isSustained: isSustained,
+                    duration: duration,
+                    endSlot: endSlot
+                });
             }
         }
     }
@@ -512,25 +562,15 @@ function gameLoop() {
             
             if (!spawnedPredictedBeats.has(beatKey) && beatInfo.time > t) {
                 // Spawn marker for this predicted beat
-                // Alternate between left (0) and right (2) for single beats
-                // Middle (1) is reserved for sustained beats
-                const currentSide = nextSide;  // Save current side for logging
-                
-                // Check if target is available (score < 5)
-                let targetIndex = currentSide;
-                if (targets[targetIndex].score >= 5) {
-                    // If current side is complete, try the other side
-                    targetIndex = (currentSide === 0) ? 2 : 0;
-                    if (targets[targetIndex].score >= 5) {
-                        // Both sides complete, skip this marker
-                        continue;
-                    }
+                // Middle (1) for sustained beats, Left (0) or Right (2) for single beats
+                let targetIndex;
+                if (beatInfo.isSustained) {
+                    targetIndex = 1; // Middle target for sustained beats
+                } else {
+                    // For single beats, randomly choose left or right
+                    targetIndex = Math.random() < 0.5 ? 0 : 2;
                 }
-                
                 const target = targets[targetIndex];
-                
-                // Alternate to the other side for next spawn
-                nextSide = (nextSide === 0) ? 2 : 0;  // Toggle between 0 (left) and 2 (right)
                 
                 // Calculate top spawn position (at top of screen, same X as target)
                 const [topX, topY] = getTopSpawnPosition(target.x);
@@ -548,38 +588,24 @@ function gameLoop() {
                 
                 // Calculate hold duration: hold for remaining time after fall
                 let holdDuration = totalTime - fallTime;
-                let fallVx, fallVy;
-                let actualSpeed = MARKER_FALL_SPEED;
                 
-                // If we don't have enough time for hold + fall at fixed speed,
-                // allow marker to start falling immediately (holdDuration = 0)
-                // and adjust speed to ensure it hits on time
-                if (holdDuration < 0) {
-                    // Not enough time for hold + fall at fixed speed
-                    // Start falling immediately (holdDuration = 0) and adjust speed to hit on time
-                    holdDuration = 0;
-                    // Recalculate fall time to use all available time
-                    const adjustedFallTime = totalTime;
-                    if (adjustedFallTime > 0.01) {  // Need at least 10ms
-                        // Use adjusted speed to hit target on time
-                        actualSpeed = distance / adjustedFallTime;
-                        fallVx = (dx / distance) * actualSpeed;
-                        fallVy = (dy / distance) * actualSpeed;
-                    } else {
-                        // Not enough time even for immediate fall, skip this marker
-                        continue;
-                    }
-                } else {
-                    // Normal case: use fixed speed
-                    fallVx = (dx / distance) * MARKER_FALL_SPEED;
-                    fallVy = (dy / distance) * MARKER_FALL_SPEED;
+                // Only create marker if we have enough time for fall at fixed speed
+                // Skip markers that can't make it in time (consistent fall speed)
+                if (holdDuration < 0 || totalTime < 0.01) {
+                    // Not enough time - skip this marker to maintain consistent fall speed
+                    continue;
                 }
                 
-                // Only create marker if we have enough time (fall time must be positive)
+                // Always use fixed speed for consistent fall speeds
+                const fallVx = (dx / distance) * MARKER_FALL_SPEED;
+                const fallVy = (dy / distance) * MARKER_FALL_SPEED;
+                
+                // Create marker if we have enough time
                 if (totalTime > 0.01) {
                     
-                    // Create marker
-                    const marker = new Marker(target, t, beatInfo.time, topX, topY, holdDuration, fallVx, fallVy);
+                    // Create marker with sustained duration if it's a sustained beat
+                    const sustainedDuration = beatInfo.isSustained ? beatInfo.duration : 0;
+                    const marker = new Marker(target, t, beatInfo.time, topX, topY, holdDuration, fallVx, fallVy, sustainedDuration);
                     
                     // Add marker to target's markers array (at the end)
                     target.markers.push(marker);
@@ -588,13 +614,15 @@ function gameLoop() {
                     // Mark this beat as spawned
                     spawnedPredictedBeats.add(beatKey);
                     
-                    // Update target's beat info
+                    // Update target's beat info - for sustained beats, use end time
                     target.beatSpawn = -1; // Not using beat numbers anymore
-                    target.beatDisappear = beatInfo.time;
+                    target.beatDisappear = beatInfo.isSustained ? (beatInfo.time + sustainedDuration) : beatInfo.time;
                     
-                    const actualFallTime = holdDuration === 0 ? totalTime : fallTime;
+                    const actualFallTime = fallTime;
                     const sideName = targetIndex === 0 ? 'left' : targetIndex === 1 ? 'middle' : 'right';
-                    log('GAME', '🎮 [GAME] 🎯 Marker spawned for predicted beat (Target:', targetIndex, 'Side:', sideName, 'Beat time:', beatInfo.time.toFixed(3), 's Total time:', totalTime.toFixed(2), 's Hold:', holdDuration.toFixed(2), 's Fall:', actualFallTime.toFixed(2), 's Speed:', actualSpeed.toFixed(1), 'px/s Distance:', distance.toFixed(1), 'px)');
+                    const beatType = beatInfo.isSustained ? 'sustained' : 'single';
+                    const durationInfo = beatInfo.isSustained ? ` Duration: ${sustainedDuration.toFixed(3)}s` : '';
+                    log('GAME', '🎮 [GAME] 🎯 Marker spawned for predicted beat (Target:', targetIndex, 'Side:', sideName, 'Type:', beatType, 'Beat time:', beatInfo.time.toFixed(3), 's Total time:', totalTime.toFixed(2), 's Hold:', holdDuration.toFixed(2), 's Fall:', actualFallTime.toFixed(2), 's Speed:', MARKER_FALL_SPEED.toFixed(1), 'px/s Distance:', distance.toFixed(1), 'px' + durationInfo + ')');
                 }
             }
         }
@@ -615,9 +643,9 @@ function gameLoop() {
     
     // Remove markers that have left the yellow circle or are individually marked as hit
     // Only remove markers that are individually hit, not all markers for a hit target
-    const markersToRemove = markers.filter(marker => marker.hit || marker.hasLeftYellowCircle());
+    const markersToRemove = markers.filter(marker => marker.hit || marker.hasLeftYellowCircle(t));
     for (const marker of markersToRemove) {
-        if (!marker.hit && marker.hasLeftYellowCircle()) {
+        if (!marker.hit && marker.hasLeftYellowCircle(t)) {
             log('GAME', '🎮 [GAME] ⏭️ Marker left target circle without being hit');
         }
         // Remove marker from target's markers array
@@ -626,39 +654,11 @@ function gameLoop() {
             marker.target.markers.splice(targetMarkerIndex, 1);
         }
     }
-    markers = markers.filter(marker => !marker.hit && !marker.hasLeftYellowCircle());
+    markers = markers.filter(marker => !marker.hit && !marker.hasLeftYellowCircle(t));
     
     // Draw
     ctx.fillStyle = 'rgb(18, 18, 24)';
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
-    
-    // Draw center star (behind targets) - grows with total score of all targets
-    const starScale = (WIDTH + HEIGHT) / 2000;
-    const bottomY = HEIGHT - Math.round(200 * starScale);
-    const leftX = WIDTH / 4;
-    const rightX = WIDTH * 3 / 4;
-    const centerX = WIDTH / 2;
-    const centerY = bottomY;
-    
-    // Calculate total score of all targets
-    let totalScore = 0;
-    for (const target of targets) {
-        totalScore += target.score;
-    }
-    
-    // Maximum total score is 3 targets * 5 = 15
-    // Maximum star radius should fill the space between left and right targets
-    const maxTotalScore = 3 * 5;  // 15
-    const maxCenterStarRadius = (rightX - leftX) / 2;  // Half the distance between left and right targets
-    
-    if (totalScore > 0) {
-        const centerStarRadius = (totalScore / maxTotalScore) * maxCenterStarRadius;
-        const centerInnerRadius = centerStarRadius * 0.4;  // Inner radius for star shape
-        
-        // Use a neutral/white color for the center star
-        ctx.fillStyle = 'rgb(255, 255, 255)';
-        drawStar(ctx, centerX, centerY, centerStarRadius, centerInnerRadius);
-    }
     
     // Draw targets (draw first so markers appear on top)
     for (const target of targets) {
@@ -668,62 +668,12 @@ function gameLoop() {
         }
         
         if (target.hit) {
-            // Draw star behind target if score > 0
-            if (target.score > 0) {
-                const starScale = (WIDTH + HEIGHT) / 2000;
-                const yellowRadius = TARGET_RADIUS + Math.round(30 * starScale);
-                const maxStarRadius = yellowRadius * 1.1;  // Slightly beyond outermost circle (at score 5)
-                const starRadius = (target.score / 5) * maxStarRadius;  // Grow proportionally with score
-                const innerRadius = starRadius * 0.4;  // Inner radius for star shape
-                
-                ctx.fillStyle = target.color;
-                drawStar(ctx, target.x, target.y, starRadius, innerRadius);
-            }
-            
             // Show green flash when hit
             ctx.fillStyle = 'rgb(70, 220, 140)';  // Green for hit
             ctx.beginPath();
             ctx.arc(target.x, target.y, TARGET_RADIUS, 0, Math.PI * 2);
             ctx.fill();
-            
-            // Show target score if enabled in config
-            if (LOG_CONFIG.TARGET_SCORES) {
-                const scoreScale = (WIDTH + HEIGHT) / 2000;
-                const scoreFontSize = Math.round(16 * scoreScale);
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                ctx.font = `bold ${scoreFontSize}px Arial`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                const scoreText = target.score.toString();
-                const textMetrics = ctx.measureText(scoreText);
-                const textWidth = textMetrics.width;
-                const textHeight = scoreFontSize;
-                const scorePadding = Math.round(6 * scoreScale);
-                const bgX = target.x;
-                const bgY = target.y + TARGET_RADIUS + Math.round(25 * scoreScale);
-                
-                // Draw background rectangle
-                ctx.fillRect(bgX - textWidth / 2 - scorePadding, bgY - textHeight / 2 - scorePadding / 2, textWidth + scorePadding * 2, textHeight + scorePadding);
-                
-                // Draw score text
-                ctx.fillStyle = target.color;
-                ctx.fillText(scoreText, bgX, bgY);
-                ctx.textAlign = 'left';
-                ctx.textBaseline = 'alphabetic';
-            }
         } else {
-            // Draw star behind target if score > 0
-            if (target.score > 0) {
-                const starScale = (WIDTH + HEIGHT) / 2000;
-                const yellowRadius = TARGET_RADIUS + Math.round(30 * starScale);
-                const maxStarRadius = yellowRadius * 1.1;  // Slightly beyond outermost circle (at score 5)
-                const starRadius = (target.score / 5) * maxStarRadius;  // Grow proportionally with score
-                const innerRadius = starRadius * 0.4;  // Inner radius for star shape
-                
-                ctx.fillStyle = target.color;
-                drawStar(ctx, target.x, target.y, starRadius, innerRadius);
-            }
-            
             // Pulse effect based on how close we are to the beat when it should disappear
             const targetScale = (WIDTH + HEIGHT) / 2000;
             let pulseR = TARGET_RADIUS;
@@ -757,32 +707,6 @@ function gameLoop() {
             ctx.beginPath();
             ctx.arc(target.x, target.y, TARGET_RADIUS + Math.round(30 * targetScale), 0, Math.PI * 2);
             ctx.stroke();
-            
-            // Show target score if enabled in config
-            if (LOG_CONFIG.TARGET_SCORES) {
-                const scoreScale = (WIDTH + HEIGHT) / 2000;
-                const scoreFontSize = Math.round(16 * scoreScale);
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                ctx.font = `bold ${scoreFontSize}px Arial`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                const scoreText = target.score.toString();
-                const textMetrics = ctx.measureText(scoreText);
-                const textWidth = textMetrics.width;
-                const textHeight = scoreFontSize;
-                const scorePadding = Math.round(6 * scoreScale);
-                const bgX = target.x;
-                const bgY = target.y + TARGET_RADIUS + Math.round(25 * scoreScale);
-                
-                // Draw background rectangle
-                ctx.fillRect(bgX - textWidth / 2 - scorePadding, bgY - textHeight / 2 - scorePadding / 2, textWidth + scorePadding * 2, textHeight + scorePadding);
-                
-                // Draw score text
-                ctx.fillStyle = target.color;
-                ctx.fillText(scoreText, bgX, bgY);
-                ctx.textAlign = 'left';
-                ctx.textBaseline = 'alphabetic';
-            }
             
             // Show key label if target has markers
             if (target.markers.length > 0 && hasEnoughData) {
@@ -838,7 +762,7 @@ function gameLoop() {
     // Display hypersmoothed BPM
     const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
     const bpmText = hyperBPM !== null && hyperBPM > 0 ? hyperBPM.toFixed(1) : '---';
-    const info = `BPM: ${bpmText} | Targets: ${targets.length} | Markers: ${markers.length} | Combo: ${combo}`;
+    const info = `BPM: ${bpmText} | Score: ${totalScore} | Combo: ${combo}`;
     ctx.fillText(info, padding, padding + fontSize1);
     
     if (lastResult) {
@@ -887,9 +811,13 @@ function gameLoop() {
         ctx.textBaseline = 'alphabetic';
     }
     
-    ctx.font = `${fontSize1}px Arial`;
-    ctx.fillStyle = 'rgb(170, 170, 190)';
-    ctx.fillText('Click on targets or press A (left) / S or Space (middle, hold) / D (right) to hit them', padding, HEIGHT - padding);
+    // Display version number in bottom-left corner
+    ctx.fillStyle = 'rgba(170, 170, 190, 0.8)';
+    ctx.font = `${Math.round(fontSize1 * 0.7)}px Arial`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`v${gameVersion}`, padding, HEIGHT - padding);
+    ctx.textBaseline = 'alphabetic';
     
     requestAnimationFrame(gameLoop);
 }
@@ -906,14 +834,10 @@ function hitTarget(targetIndex = null, mouseX = null, mouseY = null) {
     if (targetIndex !== null && targetIndex >= 0 && targetIndex < targets.length) {
         // Hit target by index (keyboard input)
         const target = targets[targetIndex];
-        if (!target.hit) {
-            clickedTarget = target;
-        }
+        clickedTarget = target;
     } else if (mouseX !== null && mouseY !== null) {
         // Find target by mouse position (mouse click)
         for (const target of targets) {
-            if (target.hit) continue;
-            
             const dx = mouseX - target.x;
             const dy = mouseY - target.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
@@ -964,24 +888,12 @@ function hitTarget(targetIndex = null, mouseX = null, mouseY = null) {
                 combo += 1;
                 log('GAME', '🎮 [GAME] ✅ Target hit:', result, '(Combo:', combo, ')');
                 
-                // Increment target score based on hit result
+                // Increment global score based on hit result
                 const scoreIncrement = result === "OKAY" ? 1 : 
                                       result === "GOOD" ? 2 : 
                                       result === "GREAT" ? 3 : 
                                       result === "PERFECT" ? 5 : 0;
-                clickedTarget.score += scoreIncrement;
-                
-                // Check if all targets are at 5 or higher
-                const allTargetsComplete = targets.every(t => t.score >= 5);
-                if (allTargetsComplete) {
-                    // Reset all targets to 0
-                    for (const target of targets) {
-                        target.score = 0;
-                    }
-                    // Show celebration text
-                    celebrationText = "ALL TARGETS COMPLETE!";
-                    celebrationTextTime = now() + 0.75;  // Display for 0.75 seconds
-                }
+                totalScore += scoreIncrement;
             }
             
             lastResult = result;
@@ -1107,6 +1019,10 @@ window.addEventListener('keyup', (event) => {
 // Start listening on page load
 window.addEventListener('load', () => {
     log('GAME', '🎮 [GAME] Page loaded, initializing game...');
+    // Load version if not already loaded
+    if (typeof window.gameVersion !== 'undefined') {
+        gameVersion = window.gameVersion;
+    }
     // Ensure canvas is initialized before starting
     initializeCanvas();
     startListening();

@@ -2,10 +2,12 @@
 // Marker class
 // -----------------------------
 class Marker {
-    constructor(target, tSpawn, tArrival, topX, topY, holdDuration, fallVx, fallVy) {
+    constructor(target, tSpawn, tArrival, topX, topY, holdDuration, fallVx, fallVy, sustainedDuration = 0) {
         this.target = target;  // Reference to the target this marker is moving toward
         this.tSpawn = tSpawn;  // Time when marker spawns
         this.tArrival = tArrival;  // Time when marker should arrive at target center
+        this.sustainedDuration = sustainedDuration;  // Duration of sustained beat (0 for single beats)
+        this.tEnd = sustainedDuration > 0 ? tArrival + sustainedDuration : tArrival;  // Time when sustained beat ends
         
         // Top position where marker holds before falling
         this.topX = topX;
@@ -41,7 +43,15 @@ class Marker {
         }
     }
     
-    hasLeftYellowCircle() {
+    hasLeftYellowCircle(currentTime) {
+        // For sustained beats, marker should stay on target until tEnd
+        if (this.sustainedDuration > 0) {
+            // Don't remove sustained markers until after the sustained duration ends
+            if (currentTime < this.tEnd) {
+                return false;
+            }
+        }
+        
         // Check if marker has left the yellow circle (clickable area)
         // Only check after it has passed through the target center
         

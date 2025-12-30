@@ -8,6 +8,30 @@ import os
 from pathlib import Path
 import sys
 
+def increment_version(player_dir):
+    """Increment version number in version.json"""
+    import json
+    version_file = player_dir / 'config' / 'version.json'
+    
+    try:
+        current_version = 1
+        if version_file.exists():
+            with open(version_file, 'r') as f:
+                data = json.load(f)
+            current_version = data.get('version', 1)
+        
+        new_version = current_version + 1
+        
+        # Write updated version
+        with open(version_file, 'w') as f:
+            json.dump({'version': new_version}, f, indent=2)
+        
+        print(f"  [VERSION] Incremented version: {current_version} -> {new_version}")
+        return new_version
+    except Exception as e:
+        print(f"  [WARNING] Could not increment version: {e}")
+        return 1
+
 def upload_player_client(bucket_name, region='us-east-1', api_endpoint=None):
     """Upload player client files to S3"""
     s3 = boto3.client('s3', region_name=region)
@@ -20,8 +44,12 @@ def upload_player_client(bucket_name, region='us-east-1', api_endpoint=None):
         print(f"[ERROR] Player directory not found: {player_dir}")
         return False
     
+    # Increment version before uploading
+    new_version = increment_version(player_dir)
+    
     print(f"Uploading player client files to S3 bucket: {bucket_name}")
     print(f"Source directory: {player_dir}")
+    print(f"Version: {new_version}")
     
     # Files to upload (maintaining structure)
     files_to_upload = [
@@ -43,6 +71,7 @@ def upload_player_client(bucket_name, region='us-east-1', api_endpoint=None):
         
         # Config files
         ('config/config.js', 'config/config.js'),
+        ('config/version.json', 'config/version.json'),
         
         # Database viewer (from aws directory)
         (None, 'viewer.html'),  # Special case - handled below
@@ -96,7 +125,14 @@ def upload_player_client(bucket_name, region='us-east-1', api_endpoint=None):
                 content = content_str.encode('utf-8')
             
             # Upload to S3
-            content_type = 'text/html' if source_file.suffix == '.html' else 'application/javascript' if source_file.suffix == '.js' else 'text/plain'
+            if source_file.suffix == '.html':
+                content_type = 'text/html'
+            elif source_file.suffix == '.js':
+                content_type = 'application/javascript'
+            elif source_file.suffix == '.json':
+                content_type = 'application/json'
+            else:
+                content_type = 'text/plain'
             
             s3.put_object(
                 Bucket=bucket_name,
