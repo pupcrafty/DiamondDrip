@@ -100,6 +100,11 @@ Examples:
             'name': f'{project_name}-{environment}-frontend',
             'display': 'Frontend Stack',
             'outputs': ['PlayerClientURL', 'PlayerClientBucketName', 'PlayerClientDistributionId']
+        },
+        'diagnostics-frontend': {
+            'name': f'{project_name}-{environment}-diagnostics-frontend',
+            'display': 'Diagnostics Frontend Stack',
+            'outputs': ['DiagnosticsClientURL', 'DiagnosticsClientBucketName', 'DiagnosticsClientDistributionId']
         }
     }
     
@@ -179,6 +184,35 @@ Examples:
                         full_url = format_url(player_url)
                         print(f"\n  🌐 Frontend URL:")
                         print(f"     {full_url}")
+                        print(f"\n  📊 Database Viewer:")
+                        print(f"     {full_url}/viewer.html")
+                    
+                    if bucket_name:
+                        print(f"\n  🪣 S3 Bucket:")
+                        print(f"     {bucket_name}")
+                    
+                    if dist_id:
+                        print(f"\n  ☁️  CloudFront Distribution ID:")
+                        print(f"     {dist_id}")
+                
+                # Diagnostics Frontend stack - show CloudFront URL
+                elif stack_key == 'diagnostics-frontend':
+                    diagnostics_url = outputs.get('DiagnosticsClientURL')
+                    bucket_name = outputs.get('DiagnosticsClientBucketName')
+                    dist_id = outputs.get('DiagnosticsClientDistributionId')
+                    
+                    if diagnostics_url:
+                        full_url = format_url(diagnostics_url)
+                        print(f"\n  🔬 Diagnostics URL:")
+                        print(f"     {full_url}")
+                        print(f"\n  📋 Available Diagnostic Pages:")
+                        print(f"     {full_url}/diagnostic.html")
+                        print(f"     {full_url}/beacon.html")
+                        print(f"     {full_url}/detectorTest.html")
+                        print(f"     {full_url}/predictionCallDiagnostic.html")
+                        print(f"     {full_url}/simpleDetectorTest.html")
+                        print(f"     {full_url}/legacyDetectorTest.html")
+                        print(f"     {full_url}/microphoneInfo.html")
                     
                     if bucket_name:
                         print(f"\n  🪣 S3 Bucket:")
@@ -219,6 +253,7 @@ Examples:
                 shown_keys = {
                     'application': ['ApiEndpoint', 'LambdaFunctionName'],
                     'frontend': ['PlayerClientURL', 'PlayerClientBucketName', 'PlayerClientDistributionId'],
+                    'diagnostics-frontend': ['DiagnosticsClientURL', 'DiagnosticsClientBucketName', 'DiagnosticsClientDistributionId'],
                     'database': ['DatabaseEndpoint', 'DatabasePort'],
                     'network': ['VPCId']
                 }
@@ -263,4 +298,5 @@ if __name__ == '__main__':
     os.chdir(script_dir)
     
     main()
+
 

@@ -1,11 +1,77 @@
 {
+  "metadata": {
+    "version": "2.0",
+    "description": "Complete argument documentation for all DiamondDrip AWS deployment scripts",
+    "last_updated": "2024-12-28",
+    "format": "Designed for consumption by LocalDeployer and other automation tools"
+  },
+  "common_arguments": {
+    "project": {
+      "long": "--project",
+      "short": "-p",
+      "type": "string",
+      "description": "Project name for resource naming",
+      "default": "diamonddrip",
+      "env_var": "PROJECT_NAME",
+      "used_by": [
+        "deploy-stacks.py",
+        "cleanup-stacks.py",
+        "diagnose-stacks.py",
+        "check-stacks-status.py",
+        "get-endpoints.py",
+        "get-lambda-logs.py",
+        "redeploy-with-logs.py"
+      ]
+    },
+    "env": {
+      "long": "--env",
+      "short": "-e",
+      "type": "string",
+      "description": "Environment name (development/staging/production)",
+      "default": "production",
+      "env_var": "ENVIRONMENT",
+      "choices": ["development", "staging", "production"],
+      "used_by": [
+        "deploy-stacks.py",
+        "cleanup-stacks.py",
+        "diagnose-stacks.py",
+        "check-stacks-status.py",
+        "get-endpoints.py",
+        "get-lambda-logs.py",
+        "redeploy-with-logs.py"
+      ]
+    },
+    "region": {
+      "long": "--region",
+      "short": "-r",
+      "type": "string",
+      "description": "AWS region",
+      "default": "us-east-1",
+      "env_var": "AWS_REGION",
+      "used_by": [
+        "deploy-stacks.py",
+        "cleanup-stacks.py",
+        "diagnose-stacks.py",
+        "check-stacks-status.py",
+        "get-endpoints.py",
+        "get-lambda-logs.py",
+        "redeploy-with-logs.py",
+        "upload-lambda-code.py",
+        "upload-player-client.py",
+        "upload-diagnostics-client.py",
+        "update-client-config.py",
+        "fix-rollback-failed.py"
+      ]
+    }
+  },
   "scripts": {
     "deploy-stacks.py": {
-      "description": "Deploy DiamondDrip infrastructure using modular stacks",
+      "description": "Deploy DiamondDrip infrastructure using modular CloudFormation stacks",
+      "category": "deployment",
       "arguments": {
         "--stack, -s": {
           "type": "multiple",
-          "choices": ["network", "database", "application", "frontend"],
+          "choices": ["network", "database", "application", "frontend", "diagnostics-frontend"],
           "description": "Deploy specific stack(s). Can be used multiple times to deploy multiple stacks.",
           "required": false,
           "default": null
@@ -34,7 +100,7 @@
           "required": false,
           "default": "production (or ENVIRONMENT env var)"
         },
-        "--region, -r": {
+        "--region": {
           "type": "string",
           "description": "AWS region",
           "required": false,
@@ -46,16 +112,23 @@
         "python deploy-stacks.py --all",
         "python deploy-stacks.py --stack network",
         "python deploy-stacks.py --stack network --stack database",
-        "python deploy-stacks.py --reset --all"
+        "python deploy-stacks.py --reset --all",
+        "python deploy-stacks.py --project myapp --env staging --all"
       ],
       "notes": [
         "Automatically generates and saves database password to database-password-{project}-{env}.txt",
         "Tracks deployment state in deployment-state-{project}-{env}.json",
-        "Deploys stacks in order: network -> database -> application -> frontend"
+        "Deploys stacks in order: network -> database -> application -> frontend -> diagnostics-frontend",
+        "Respects deployment state file unless --all or --reset is used"
+      ],
+      "generates": [
+        "database-password-{project}-{env}.txt",
+        "deployment-state-{project}-{env}.json"
       ]
     },
     "cleanup-stacks.py": {
       "description": "Clean up DiamondDrip CloudFormation stacks. By default, only deletes failed stacks from state file.",
+      "category": "cleanup",
       "arguments": {
         "--all, -a": {
           "type": "flag",
@@ -99,12 +172,13 @@
         "With --all: Deletes all stacks regardless of state",
         "With --stack: Deletes a single specific stack by name (no dependency ordering)",
         "Updates state file after deletion",
-        "Deletes stacks in reverse order: frontend -> application -> database -> network (unless using --stack)",
+        "Deletes stacks in reverse order: diagnostics-frontend -> frontend -> application -> database -> network (unless using --stack)",
         "No confirmation prompts - fully non-interactive"
       ]
     },
     "fix-rollback-failed.py": {
       "description": "Fix ROLLBACK_FAILED CloudFormation stack by continuing rollback or skipping resources",
+      "category": "troubleshooting",
       "arguments": {
         "stack_name": {
           "type": "positional",
@@ -132,7 +206,7 @@
         }
       },
       "examples": [
-        "python fix-rollback-failed.py diamonddrip-production --action continue",
+        "python fix-rollback-failed.py diamonddrip-production-network --action continue",
         "python fix-rollback-failed.py diamonddrip-production --action force-delete",
         "python fix-rollback-failed.py diamonddrip-production --action show-events",
         "python fix-rollback-failed.py diamonddrip-production --action continue --skip-resources Database"
@@ -147,10 +221,11 @@
     },
     "diagnose-stacks.py": {
       "description": "Diagnose CloudFormation stack failures by analyzing stack events",
+      "category": "troubleshooting",
       "arguments": {
         "--stack, -s": {
           "type": "choice",
-          "choices": ["network", "database", "application", "frontend"],
+          "choices": ["network", "database", "application", "frontend", "diagnostics-frontend"],
           "description": "Diagnose specific stack by type",
           "required": false,
           "default": null
@@ -214,6 +289,7 @@
     },
     "check-stacks-status.py": {
       "description": "Check status of all DiamondDrip CloudFormation stacks",
+      "category": "monitoring",
       "arguments": {
         "--watch, -w": {
           "type": "optional_int",
@@ -253,8 +329,225 @@
         "Press Ctrl+C to exit watch mode"
       ]
     },
+    "check-stack-status.py": {
+      "description": "Check status of a single CloudFormation stack with detailed error information",
+      "category": "monitoring",
+      "arguments": {
+        "stack_name": {
+          "type": "positional",
+          "description": "CloudFormation stack name",
+          "required": true
+        },
+        "region": {
+          "type": "positional",
+          "description": "AWS region (optional, second positional argument)",
+          "required": false,
+          "default": "us-east-1"
+        }
+      },
+      "examples": [
+        "python check-stack-status.py diamonddrip-production-network",
+        "python check-stack-status.py diamonddrip-production-network us-east-1"
+      ],
+      "notes": [
+        "Shows detailed stack status, failed resources, outputs, and parameters",
+        "Uses positional arguments (not argparse)",
+        "Simpler alternative to check-stacks-status.py for single stack inspection"
+      ]
+    },
+    "get-endpoints.py": {
+      "description": "Get endpoints and URLs for all DiamondDrip CloudFormation stacks",
+      "category": "information",
+      "arguments": {
+        "--project, -p": {
+          "type": "string",
+          "description": "Project name",
+          "required": false,
+          "default": "diamonddrip (or PROJECT_NAME env var)"
+        },
+        "--env, -e": {
+          "type": "string",
+          "description": "Environment",
+          "required": false,
+          "default": "production (or ENVIRONMENT env var)"
+        },
+        "--region, -r": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1 (or AWS_REGION env var)"
+        },
+        "--json, -j": {
+          "type": "flag",
+          "description": "Output in JSON format",
+          "required": false,
+          "default": false
+        }
+      },
+      "examples": [
+        "python get-endpoints.py",
+        "python get-endpoints.py --project myapp --env staging",
+        "python get-endpoints.py --json"
+      ],
+      "notes": [
+        "Displays API endpoints, frontend URLs, database endpoints, and other useful information",
+        "Shows stack status and outputs for all stacks",
+        "JSON output format for programmatic consumption"
+      ]
+    },
+    "get-lambda-logs.py": {
+      "description": "Get Lambda function logs from CloudWatch Logs with tailing, filtering, and time-based queries",
+      "category": "monitoring",
+      "arguments": {
+        "--stack-name, -s": {
+          "type": "string",
+          "description": "CloudFormation stack name (application stack)",
+          "required": false,
+          "default": "diamonddrip-production-application (or STACK_NAME env var)"
+        },
+        "--function-name, -f": {
+          "type": "string",
+          "description": "Lambda function name (overrides stack-name lookup)",
+          "required": false,
+          "default": null
+        },
+        "--region, -r": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1 (or AWS_REGION env var)"
+        },
+        "--minutes, -m": {
+          "type": "integer",
+          "description": "Get logs from last N minutes",
+          "required": false,
+          "default": null
+        },
+        "--hours": {
+          "type": "integer",
+          "description": "Get logs from last N hours",
+          "required": false,
+          "default": null
+        },
+        "--days": {
+          "type": "integer",
+          "description": "Get logs from last N days",
+          "required": false,
+          "default": null
+        },
+        "--start": {
+          "type": "string",
+          "description": "Start time (format: YYYY-MM-DD HH:MM:SS, UTC)",
+          "required": false,
+          "default": null
+        },
+        "--end": {
+          "type": "string",
+          "description": "End time (format: YYYY-MM-DD HH:MM:SS, UTC)",
+          "required": false,
+          "default": null
+        },
+        "--filter, --filter-pattern": {
+          "type": "string",
+          "description": "Filter pattern (CloudWatch Logs filter syntax)",
+          "required": false,
+          "default": null
+        },
+        "--limit": {
+          "type": "integer",
+          "description": "Maximum number of log events to retrieve",
+          "required": false,
+          "default": 100
+        },
+        "--follow, -F": {
+          "type": "flag",
+          "description": "Follow logs (like tail -f)",
+          "required": false,
+          "default": false
+        },
+        "--project, -p": {
+          "type": "string",
+          "description": "Project name",
+          "required": false,
+          "default": "diamonddrip (or PROJECT_NAME env var)"
+        },
+        "--env, -e": {
+          "type": "string",
+          "description": "Environment",
+          "required": false,
+          "default": "production (or ENVIRONMENT env var)"
+        }
+      },
+      "examples": [
+        "python get-lambda-logs.py",
+        "python get-lambda-logs.py --minutes 30",
+        "python get-lambda-logs.py --hours 24",
+        "python get-lambda-logs.py --start \"2024-01-01 10:00:00\" --end \"2024-01-01 11:00:00\"",
+        "python get-lambda-logs.py --follow",
+        "python get-lambda-logs.py --filter \"ERROR\"",
+        "python get-lambda-logs.py --function-name diamonddrip-production-prediction-server"
+      ],
+      "notes": [
+        "Default time range: last hour if no time arguments specified",
+        "Supports CloudWatch Logs filter syntax for --filter",
+        "Follow mode continuously monitors for new log events",
+        "Auto-detects Lambda function name from stack outputs if --function-name not provided"
+      ]
+    },
+    "upload-lambda-code.py": {
+      "description": "Build and upload Lambda function code to AWS Lambda",
+      "category": "deployment",
+      "arguments": {
+        "--stack-name, -s": {
+          "type": "string",
+          "description": "CloudFormation stack name (application stack)",
+          "required": false,
+          "default": null
+        },
+        "--function-name, -f": {
+          "type": "string",
+          "description": "Lambda function name (overrides stack-name lookup)",
+          "required": false,
+          "default": null
+        },
+        "--zip-file, -z": {
+          "type": "string",
+          "description": "Path to existing zip file (skip build)",
+          "required": false,
+          "default": null
+        },
+        "--build-only, -b": {
+          "type": "flag",
+          "description": "Build package only, don't upload",
+          "required": false,
+          "default": false
+        },
+        "--region, -r": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1 (or AWS_REGION env var)"
+        }
+      },
+      "examples": [
+        "python upload-lambda-code.py --stack-name diamonddrip-production-application",
+        "python upload-lambda-code.py --function-name diamonddrip-production-prediction-server",
+        "python upload-lambda-code.py --build-only",
+        "python upload-lambda-code.py --function-name my-function --zip-file lambda-package.zip"
+      ],
+      "notes": [
+        "Builds Lambda deployment package with dependencies (psycopg2-binary)",
+        "Auto-detects Lambda function name from stack outputs if --stack-name provided",
+        "Creates Linux-compatible package (uses manylinux2014_x86_64 wheels)",
+        "Waits for code update to complete before returning"
+      ],
+      "generates": [
+        "lambda-package.zip"
+      ]
+    },
     "upload-player-client.py": {
-      "description": "Upload player client files to S3 bucket",
+      "description": "Upload player client files to S3 bucket and update configuration",
+      "category": "deployment",
       "arguments": {
         "--bucket": {
           "type": "string",
@@ -297,11 +590,59 @@
         "Maintains directory structure for relative paths",
         "Auto-detects bucket name from CloudFormation stack outputs if --bucket not provided",
         "Auto-detects API endpoint from stack outputs if --api-endpoint not provided",
-        "Updates client configuration files with API endpoint"
+        "Updates client configuration files with API endpoint",
+        "Requires frontend stack to be deployed"
+      ]
+    },
+    "upload-diagnostics-client.py": {
+      "description": "Upload diagnostics client files to S3 bucket and optionally invalidate CloudFront cache",
+      "category": "deployment",
+      "arguments": {
+        "--bucket": {
+          "type": "string",
+          "description": "S3 bucket name (auto-detected from stack if not provided)",
+          "required": false
+        },
+        "--stack-name, -s": {
+          "type": "string",
+          "description": "CloudFormation stack name (diagnostics-frontend stack)",
+          "required": false,
+          "default": "diamonddrip-production-diagnostics-frontend"
+        },
+        "--region, -r": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1"
+        },
+        "--api-endpoint": {
+          "type": "string",
+          "description": "API Gateway endpoint (auto-detected from application stack if not provided)",
+          "required": false
+        },
+        "--invalidate": {
+          "type": "flag",
+          "description": "Invalidate CloudFront cache after upload",
+          "required": false,
+          "default": false
+        }
+      },
+      "examples": [
+        "python upload-diagnostics-client.py",
+        "python upload-diagnostics-client.py --stack-name diamonddrip-production-diagnostics-frontend",
+        "python upload-diagnostics-client.py --bucket my-bucket --invalidate",
+        "python upload-diagnostics-client.py --api-endpoint https://api.example.com"
+      ],
+      "notes": [
+        "Uploads all diagnostics HTML files and required JavaScript files to S3",
+        "Maintains directory structure for relative paths (beatDetector/, config/, js/)",
+        "Updates PREDICTION_SERVER_URL in diagnostic HTML files if API endpoint provided",
+        "Requires diagnostics-frontend stack to be deployed"
       ]
     },
     "update-client-config.py": {
       "description": "Update client configuration files with new API endpoint",
+      "category": "configuration",
       "arguments": {
         "--stack-name": {
           "type": "string",
@@ -332,45 +673,237 @@
         "If --endpoint is provided, uses that instead of looking up from stack",
         "Updates files: player/playerClient/js/game.js and diagnostics files"
       ]
+    },
+    "redeploy-with-logs.py": {
+      "description": "Clean, redeploy, and watch logs for DiamondDrip application",
+      "category": "orchestration",
+      "arguments": {
+        "--project, -p": {
+          "type": "string",
+          "description": "Project name",
+          "required": false,
+          "default": "diamonddrip (or PROJECT_NAME env var)"
+        },
+        "--env, -e": {
+          "type": "string",
+          "description": "Environment",
+          "required": false,
+          "default": "production (or ENVIRONMENT env var)"
+        },
+        "--region, -r": {
+          "type": "string",
+          "description": "AWS region",
+          "required": false,
+          "default": "us-east-1 (or AWS_REGION env var)"
+        },
+        "--stacks, -s": {
+          "type": "multiple",
+          "choices": ["network", "database", "application", "frontend", "diagnostics-frontend"],
+          "description": "Deploy specific stacks only (default: all)",
+          "required": false,
+          "default": null
+        },
+        "--no-cleanup": {
+          "type": "flag",
+          "description": "Skip cleanup step",
+          "required": false,
+          "default": false
+        },
+        "--no-logs": {
+          "type": "flag",
+          "description": "Skip log watching step",
+          "required": false,
+          "default": false
+        },
+        "--log-minutes": {
+          "type": "integer",
+          "description": "Minutes of logs to fetch initially",
+          "required": false,
+          "default": 5
+        },
+        "--no-follow": {
+          "type": "flag",
+          "description": "Don't follow logs (just fetch once)",
+          "required": false,
+          "default": false
+        },
+        "--cleanup-all": {
+          "type": "flag",
+          "description": "Clean up all stacks (not just failed ones)",
+          "required": false,
+          "default": false
+        }
+      },
+      "examples": [
+        "python redeploy-with-logs.py",
+        "python redeploy-with-logs.py --no-logs",
+        "python redeploy-with-logs.py --stacks application frontend",
+        "python redeploy-with-logs.py --no-cleanup",
+        "python redeploy-with-logs.py --log-minutes 30"
+      ],
+      "notes": [
+        "Orchestrates cleanup, deployment, and log monitoring in sequence",
+        "Step 1: Cleanup existing stacks (unless --no-cleanup)",
+        "Step 2: Deploy stacks (all or specified with --stacks)",
+        "Step 3: Watch Lambda logs (unless --no-logs)",
+        "Waits between steps for resources to settle",
+        "Uses --reset and --all flags when calling deploy-stacks.py"
+      ]
     }
   },
   "common_environment_variables": {
     "PROJECT_NAME": {
-      "description": "Project name (used by deploy-stacks.py, cleanup-stacks.py, diagnose-stacks.py, check-stacks-status.py)",
-      "default": "diamonddrip"
+      "description": "Project name (used by most scripts)",
+      "default": "diamonddrip",
+      "scripts": [
+        "deploy-stacks.py",
+        "cleanup-stacks.py",
+        "diagnose-stacks.py",
+        "check-stacks-status.py",
+        "get-endpoints.py",
+        "get-lambda-logs.py",
+        "redeploy-with-logs.py"
+      ]
     },
     "ENVIRONMENT": {
-      "description": "Environment name (used by deploy-stacks.py, cleanup-stacks.py, diagnose-stacks.py, check-stacks-status.py)",
-      "default": "production"
+      "description": "Environment name (used by most scripts)",
+      "default": "production",
+      "scripts": [
+        "deploy-stacks.py",
+        "cleanup-stacks.py",
+        "diagnose-stacks.py",
+        "check-stacks-status.py",
+        "get-endpoints.py",
+        "get-lambda-logs.py",
+        "redeploy-with-logs.py"
+      ]
     },
     "AWS_REGION": {
-      "description": "AWS region (used by deploy-stacks.py, cleanup-stacks.py, diagnose-stacks.py, check-stacks-status.py)",
-      "default": "us-east-1"
+      "description": "AWS region (used by most scripts)",
+      "default": "us-east-1",
+      "scripts": [
+        "deploy-stacks.py",
+        "cleanup-stacks.py",
+        "diagnose-stacks.py",
+        "check-stacks-status.py",
+        "get-endpoints.py",
+        "get-lambda-logs.py",
+        "redeploy-with-logs.py",
+        "upload-lambda-code.py"
+      ]
+    },
+    "STACK_NAME": {
+      "description": "CloudFormation stack name (used by get-lambda-logs.py)",
+      "default": "diamonddrip-production-application",
+      "scripts": [
+        "get-lambda-logs.py"
+      ]
     },
     "DB_USERNAME": {
       "description": "Database username (used by deploy-stacks.py)",
-      "default": "diamonddrip_admin"
+      "default": "diamonddrip_admin",
+      "scripts": [
+        "deploy-stacks.py"
+      ]
     },
     "DB_INSTANCE_CLASS": {
       "description": "RDS instance class (used by deploy-stacks.py)",
-      "default": "db.t3.micro"
+      "default": "db.t3.micro",
+      "scripts": [
+        "deploy-stacks.py"
+      ]
     },
     "DB_STORAGE": {
       "description": "RDS allocated storage in GB (used by deploy-stacks.py)",
-      "default": "20"
+      "default": "20",
+      "scripts": [
+        "deploy-stacks.py"
+      ]
     }
   },
   "generated_files": {
     "database-password-{project}-{env}.txt": {
       "description": "Auto-generated database password file (gitignored)",
       "generated_by": "deploy-stacks.py",
-      "permissions": "600 (owner read/write only)"
+      "permissions": "600 (owner read/write only)",
+      "format": "Plain text password"
     },
     "deployment-state-{project}-{env}.json": {
       "description": "Deployment state tracking file (gitignored)",
       "generated_by": "deploy-stacks.py",
-      "used_by": ["deploy-stacks.py", "cleanup-stacks.py"]
+      "used_by": [
+        "deploy-stacks.py",
+        "cleanup-stacks.py"
+      ],
+      "format": "JSON with stack deployment status"
+    },
+    "lambda-package.zip": {
+      "description": "Lambda deployment package with code and dependencies",
+      "generated_by": "upload-lambda-code.py",
+      "format": "ZIP archive"
+    }
+  },
+  "stack_types": {
+    "network": {
+      "description": "VPC, subnets, security groups, internet gateway",
+      "depends_on": [],
+      "deployment_order": 1
+    },
+    "database": {
+      "description": "RDS PostgreSQL instance, subnet group, secrets",
+      "depends_on": ["network"],
+      "deployment_order": 2
+    },
+    "application": {
+      "description": "Lambda function, API Gateway, IAM roles",
+      "depends_on": ["network", "database"],
+      "deployment_order": 3
+    },
+    "frontend": {
+      "description": "S3 bucket, CloudFront distribution, player client",
+      "depends_on": ["application"],
+      "deployment_order": 4
+    },
+    "diagnostics-frontend": {
+      "description": "S3 bucket, CloudFront distribution, diagnostics client",
+      "depends_on": ["application"],
+      "deployment_order": 5
+    }
+  },
+  "argument_consistency": {
+    "project": {
+      "long_form": "--project",
+      "short_form": "-p",
+      "used_consistently": true,
+      "scripts_without": [
+        "check-stack-status.py",
+        "fix-rollback-failed.py",
+        "upload-player-client.py",
+        "upload-diagnostics-client.py",
+        "update-client-config.py"
+      ]
+    },
+    "env": {
+      "long_form": "--env",
+      "short_form": "-e",
+      "used_consistently": true,
+      "scripts_without": [
+        "check-stack-status.py",
+        "fix-rollback-failed.py",
+        "upload-player-client.py",
+        "upload-diagnostics-client.py",
+        "update-client-config.py",
+        "upload-lambda-code.py"
+      ]
+    },
+    "region": {
+      "long_form": "--region",
+      "short_form": "-r",
+      "used_consistently": true,
+      "scripts_without": [
+        "check-stack-status.py"
+      ],
+      "note": "check-stack-status.py uses positional argument for region"
     }
   }
 }
-

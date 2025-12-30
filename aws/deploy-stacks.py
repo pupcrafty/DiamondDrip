@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Deploy DiamondDrip infrastructure using smaller, modular stacks
-Deploys stacks in order: Network -> Database -> Application -> Frontend
+Deploys stacks in order: Network -> Database -> Application -> Frontend -> Diagnostics-Frontend
 
 Tracks deployment state in deployment-state.json to allow resuming failed deployments.
 """
@@ -33,6 +33,61 @@ def load_upload_module():
     return None, None
 
 upload_player_client, invalidate_cloudfront = load_upload_module()
+
+# Import diagnostics upload functions from upload-diagnostics-client.py
+def load_diagnostics_upload_module():
+    """Load the upload-diagnostics-client module dynamically"""
+    upload_script = Path(__file__).parent / 'upload-diagnostics-client.py'
+    if not upload_script.exists():
+        return None, None
+    
+    spec = importlib.util.spec_from_file_location("upload_diagnostics_client", upload_script)
+    if spec and spec.loader:
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.upload_diagnostics_client, module.invalidate_cloudfront
+    return None, None
+
+upload_diagnostics_client, invalidate_diagnostics_cloudfront = load_diagnostics_upload_module()
+
+# Import Lambda upload function
+def load_lambda_upload_module():
+    """Load the upload-lambda-code module dynamically"""
+    lambda_upload_script = Path(__file__).parent / 'upload-lambda-code.py'
+    if not lambda_upload_script.exists():
+        return None
+    
+    spec = importlib.util.spec_from_file_location("upload_lambda_code", lambda_upload_script)
+    if spec and spec.loader:
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.upload_lambda_code, module.build_lambda_package
+    return None
+
+lambda_upload_code, lambda_build_package = load_lambda_upload_module()
+
+def get_lambda_zip_file():
+    """Get Lambda zip file, preferring docker-built version"""
+    script_dir = Path(__file__).parent
+    docker_zip = script_dir / 'lambda-package-docker.zip'
+    regular_zip = script_dir / 'lambda-package.zip'
+    
+    # Prefer docker zip if it exists
+    if docker_zip.exists():
+        print(f"   Using Docker-built package: {docker_zip.name}")
+        return docker_zip
+    elif regular_zip.exists():
+        print(f"   Using existing package: {regular_zip.name}")
+        return regular_zip
+    else:
+        # Error if no package exists
+        print(f"   ERROR: No Lambda package found!")
+        print(f"      Expected one of:")
+        print(f"        - {docker_zip}")
+        print(f"        - {regular_zip}")
+        print(f"      To build a package, use Docker:")
+        print(f"        docker build -t lambda-builder -f Dockerfile . && docker run --rm -v %cd%:/output lambda-builder")
+        return None
 
 def check_aws_credentials():
     """Check if AWS credentials are configured"""
@@ -416,7 +471,7 @@ Examples:
     )
     
     parser.add_argument('--stack', '-s', action='append', 
-                       choices=['network', 'database', 'application', 'frontend'],
+                       choices=['network', 'database', 'application', 'frontend', 'diagnostics-frontend'],
                        help='Deploy specific stack(s) (can be used multiple times)')
     parser.add_argument('--all', '-a', action='store_true',
                        help='Deploy all stacks, ignoring state file')
@@ -512,6 +567,15 @@ Examples:
                 'Environment': environment
             },
             'capabilities': None
+        },
+        'diagnostics-frontend': {
+            'name': f'{project_name}-{environment}-diagnostics-frontend',
+            'template': 'stacks/diagnostics-frontend.yaml',
+            'parameters': {
+                'ProjectName': project_name,
+                'Environment': environment
+            },
+            'capabilities': None
         }
     }
     
@@ -571,6 +635,39 @@ Examples:
         )
         
         if success:
+            # If this is the application stack, upload Lambda code
+            if stack_key == 'application':
+                print(f"\n[UPLOAD] Uploading Lambda function code...")
+                try:
+                    # Get Lambda function name from stack outputs
+                    app_outputs = get_stack_outputs(stack['name'], region)
+                    function_name = app_outputs.get('LambdaFunctionName')
+                    
+                    if function_name:
+                        if lambda_upload_code:
+                            # Get zip file (prefer docker zip, fallback to building)
+                            zip_file = get_lambda_zip_file()
+                            if zip_file:
+                                upload_success = lambda_upload_code(function_name, zip_file, region)
+                                if upload_success:
+                                    print(f"   ✓ Lambda code uploaded successfully")
+                                else:
+                                    print(f"   ⚠️  Warning: Lambda code upload failed")
+                                    print(f"      Run manually: python upload-lambda-code.py --stack-name {stack['name']}")
+                            else:
+                                print(f"   ⚠️  Warning: Lambda package not found")
+                                print(f"      Build a package using Docker, then run:")
+                                print(f"      python upload-lambda-code.py --stack-name {stack['name']}")
+                        else:
+                            print(f"   ⚠️  Warning: Lambda upload module not available. Run manually:")
+                            print(f"      python upload-lambda-code.py --stack-name {stack['name']}")
+                    else:
+                        print(f"   ⚠️  Warning: Could not get Lambda function name from stack outputs")
+                        print(f"      Run manually: python upload-lambda-code.py --stack-name {stack['name']}")
+                except Exception as e:
+                    print(f"   ⚠️  Warning: Failed to upload Lambda code automatically: {e}")
+                    print(f"      Run manually: python upload-lambda-code.py --stack-name {stack['name']}")
+            
             # If this is the frontend stack, upload files to S3
             if stack_key == 'frontend':
                 print(f"\n[UPLOAD] Uploading frontend files to S3...")
@@ -626,6 +723,61 @@ Examples:
                     print(f"   ⚠️  Warning: Failed to upload files automatically: {e}")
                     print(f"      Run manually: python upload-player-client.py --stack-name {stack['name']} --invalidate")
             
+            # If this is the diagnostics-frontend stack, upload files to S3
+            if stack_key == 'diagnostics-frontend':
+                print(f"\n[UPLOAD] Uploading diagnostics files to S3...")
+                try:
+                    # Get bucket name from stack outputs
+                    diagnostics_outputs = get_stack_outputs(stack['name'], region)
+                    bucket_name = diagnostics_outputs.get('DiagnosticsClientBucketName')
+                    distribution_id = diagnostics_outputs.get('DiagnosticsClientDistributionId')
+                    
+                    if bucket_name:
+                        # Get API endpoint for config update
+                        app_outputs = get_stack_outputs(f'{project_name}-{environment}-application', region)
+                        api_endpoint = app_outputs.get('ApiEndpoint') if app_outputs else None
+                        
+                        # Upload files
+                        if upload_diagnostics_client:
+                            upload_success = upload_diagnostics_client(bucket_name, region, api_endpoint)
+                            if upload_success:
+                                print(f"   ✓ Files uploaded successfully to S3 bucket: {bucket_name}")
+                                
+                                # Verify files are actually in the bucket
+                                print(f"   [VERIFY] Verifying files in S3 bucket...")
+                                try:
+                                    s3 = boto3.client('s3', region_name=region)
+                                    response = s3.list_objects_v2(Bucket=bucket_name, MaxKeys=20)
+                                    if 'Contents' in response:
+                                        file_count = len(response['Contents'])
+                                        print(f"   ✓ Verified: {file_count} file(s) found in bucket")
+                                        # List key files
+                                        key_files = [obj['Key'] for obj in response['Contents']]
+                                        if 'diagnostic.html' in key_files:
+                                            print(f"   ✓ Verified: diagnostic.html is present")
+                                        else:
+                                            print(f"   ⚠️  Warning: diagnostic.html not found in bucket")
+                                    else:
+                                        print(f"   ⚠️  Warning: No files found in bucket (may be empty)")
+                                except Exception as e:
+                                    print(f"   ⚠️  Warning: Could not verify files in bucket: {e}")
+                                
+                                # Invalidate CloudFront cache
+                                if distribution_id and invalidate_diagnostics_cloudfront:
+                                    invalidate_diagnostics_cloudfront(distribution_id, region)
+                                    print(f"   ✓ CloudFront cache invalidation initiated")
+                            else:
+                                print(f"   ⚠️  Warning: Some files failed to upload. Check errors above.")
+                        else:
+                            print(f"   ⚠️  Warning: Diagnostics upload module not available. Run manually:")
+                            print(f"      python upload-diagnostics-client.py --stack-name {stack['name']} --invalidate")
+                    else:
+                        print(f"   ⚠️  Warning: Could not get bucket name from stack outputs.")
+                        print(f"      Run manually: python upload-diagnostics-client.py --stack-name {stack['name']} --invalidate")
+                except Exception as e:
+                    print(f"   ⚠️  Warning: Failed to upload files automatically: {e}")
+                    print(f"      Run manually: python upload-diagnostics-client.py --stack-name {stack['name']} --invalidate")
+            
             update_stack_state(state, stack['name'], 'success', last_attempt_timestamp=attempt_timestamp)
             deployed_stacks.append(stack['name'])
         else:
@@ -666,14 +818,33 @@ Examples:
         # Get final outputs
         app_outputs = get_stack_outputs(f'{project_name}-{environment}-application', region)
         frontend_outputs = get_stack_outputs(f'{project_name}-{environment}-frontend', region)
+        diagnostics_outputs = get_stack_outputs(f'{project_name}-{environment}-diagnostics-frontend', region)
         
         if app_outputs:
             print(f"\n📡 API Endpoint:")
             print(f"   {app_outputs.get('ApiEndpoint', 'N/A')}")
         
         if frontend_outputs:
-            print(f"\n🌐 Frontend URL:")
-            print(f"   https://{frontend_outputs.get('PlayerClientURL', 'N/A')}")
+            player_url = frontend_outputs.get('PlayerClientURL')
+            if player_url:
+                print(f"\n🌐 Frontend URL:")
+                print(f"   https://{player_url}")
+                print(f"\n📊 Database Viewer:")
+                print(f"   https://{player_url}/viewer.html")
+        
+        if diagnostics_outputs:
+            diagnostics_url = diagnostics_outputs.get('DiagnosticsClientURL')
+            if diagnostics_url:
+                print(f"\n🔬 Diagnostics URL:")
+                print(f"   https://{diagnostics_url}")
+                print(f"\n   Available Diagnostic Pages:")
+                print(f"   - https://{diagnostics_url}/diagnostic.html")
+                print(f"   - https://{diagnostics_url}/beacon.html")
+                print(f"   - https://{diagnostics_url}/detectorTest.html")
+                print(f"   - https://{diagnostics_url}/predictionCallDiagnostic.html")
+                print(f"   - https://{diagnostics_url}/simpleDetectorTest.html")
+                print(f"   - https://{diagnostics_url}/legacyDetectorTest.html")
+                print(f"   - https://{diagnostics_url}/microphoneInfo.html")
         
         print(f"\n📝 Update your client code:")
         if app_outputs.get('ApiEndpoint'):

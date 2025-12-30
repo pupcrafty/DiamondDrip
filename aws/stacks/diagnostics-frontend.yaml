@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DiamondDrip Diagnostics Frontend Infrastructure - S3 Bucket and CloudFront Distribution'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: diamonddrip
+    Description: Project name for resource naming
+  
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [development, staging, production]
+    Description: Deployment environment
+
+Resources:
+  # S3 Bucket for Diagnostics Client
+  DiagnosticsClientBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-${Environment}-diagnostics-client'
+      WebsiteConfiguration:
+        IndexDocument: diagnostic.html
+        ErrorDocument: diagnostic.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-${Environment}-diagnostics-client'
+  
+  # S3 Bucket Policy for Public Read
+  DiagnosticsClientBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DiagnosticsClientBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${DiagnosticsClientBucket}/*'
+  
+  # CloudFront Distribution
+  DiagnosticsClientDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !Sub '${DiagnosticsClientBucket}.s3-website-${AWS::Region}.amazonaws.com'
+            Id: S3Origin
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+        Enabled: true
+        DefaultRootObject: diagnostic.html
+        Comment: !Sub 'CloudFront distribution for ${ProjectName} diagnostics client'
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - DELETE
+            - GET
+            - HEAD
+            - OPTIONS
+            - PATCH
+            - POST
+            - PUT
+          TargetOriginId: S3Origin
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          ViewerProtocolPolicy: redirect-to-https
+          MinTTL: 0
+          DefaultTTL: 3600
+          MaxTTL: 86400
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /diagnostic.html
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /diagnostic.html
+        PriceClass: PriceClass_100
+        HttpVersion: http2
+        IPV6Enabled: true
+
+Outputs:
+  DiagnosticsClientBucketName:
+    Description: S3 bucket name for diagnostics client
+    Value: !Ref DiagnosticsClientBucket
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-diagnostics-bucket'
+  
+  DiagnosticsClientURL:
+    Description: CloudFront URL for diagnostics client
+    Value: !GetAtt DiagnosticsClientDistribution.DomainName
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-diagnostics-url'
+  
+  DiagnosticsClientDistributionId:
+    Description: CloudFront distribution ID
+    Value: !Ref DiagnosticsClientDistribution
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-diagnostics-distribution-id'
+

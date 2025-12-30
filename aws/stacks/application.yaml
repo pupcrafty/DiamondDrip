@@ -126,6 +126,13 @@ Resources:
       RouteKey: 'POST /prediction'
       Target: !Sub 'integrations/${ApiIntegration}'
   
+  ApiRoutePredictionGet:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /prediction'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  
   ApiRouteStats:
     Type: AWS::ApiGatewayV2::Route
     Properties:

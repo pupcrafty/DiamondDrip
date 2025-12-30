@@ -6,7 +6,7 @@ Complete AWS deployment setup for the DiamondDrip Prediction Server using a modu
 
 The infrastructure is split into 4 independent stacks:
 
-- **Network Stack**: VPC, subnets, NAT gateway, route tables, security groups
+- **Network Stack**: VPC, subnets, NAT gateway, route tables, security groups, VPC endpoints
 - **Database Stack**: RDS PostgreSQL, DB subnet group, Secrets Manager
 - **Application Stack**: Lambda function, API Gateway, IAM roles
 - **Frontend Stack**: S3 bucket, CloudFront distribution
@@ -380,6 +380,59 @@ python update-client-config.py [options]
 - `--config-file` - Config file to update
 - `--region` - AWS region
 
+#### `create-vpc-endpoints.py` - Create VPC Endpoints
+
+Create VPC endpoints for CloudWatch Logs and Secrets Manager. This allows Lambda functions in a VPC to access AWS services without requiring a NAT Gateway or internet access.
+
+**Why VPC Endpoints?**
+- Lambda functions in a VPC cannot access AWS services (CloudWatch Logs, Secrets Manager) without either:
+  - A NAT Gateway (more expensive, ~$32/month + data transfer)
+  - VPC Endpoints (more cost-effective, ~$7/month per endpoint)
+- VPC endpoints provide better security (traffic stays within AWS network)
+- Lower latency than NAT Gateway
+
+**Basic Usage:**
+```bash
+# Create VPC endpoints (auto-detects from network stack)
+python create-vpc-endpoints.py
+
+# Specify project and environment
+python create-vpc-endpoints.py --project diamonddrip --env production --region us-east-1
+
+# Manual specification
+python create-vpc-endpoints.py --vpc-id vpc-xxx --subnet-ids subnet-xxx subnet-yyy
+```
+
+**Options:**
+- `--project, -p <name>` - Project name (default: diamonddrip)
+- `--env, -e <env>` - Environment: development, staging, production (default: production)
+- `--region, -r <region>` - AWS region (default: us-east-1)
+- `--vpc-id <id>` - VPC ID (auto-detected from stack if not provided)
+- `--subnet-ids <id1> <id2>` - Subnet IDs (auto-detected from stack if not provided)
+- `--security-group-id <id>` - Security group ID for endpoints (auto-created if not provided)
+
+**What it does:**
+1. Gets VPC and subnet IDs from the network CloudFormation stack
+2. Creates or finds a security group for VPC endpoints
+3. Creates CloudWatch Logs VPC endpoint
+4. Creates Secrets Manager VPC endpoint
+
+**Note:** VPC endpoints are also automatically created when deploying the network stack (if using the updated `network.yaml` template).
+
+**Examples:**
+```bash
+# Create endpoints for production
+python create-vpc-endpoints.py
+
+# Create endpoints for staging
+python create-vpc-endpoints.py --env staging
+
+# Create endpoints manually
+python create-vpc-endpoints.py \
+    --vpc-id vpc-0ad32c36a62864f98 \
+    --subnet-ids subnet-0f49c162daf779703 subnet-0edf87a4e6eb353cb
+```
+
 #### `database.py` - Database Utilities
 
 Database helper functions and utilities.
@@ -593,6 +646,34 @@ aws cloudformation describe-stack-events \
    - May need `rds:CreateDBSnapshot` permission
    - Can take 10-15 minutes to delete
 
+5. **Lambda function can't access CloudWatch Logs or Secrets Manager (500 errors, no logs)**
+   - **Symptom**: Lambda returns 500 errors, no logs appear in CloudWatch
+   - **Cause**: Lambda is in a VPC without VPC endpoints or NAT Gateway
+   - **Solution**: Create VPC endpoints for CloudWatch Logs and Secrets Manager
+     ```bash
+     # Option 1: Use the script (recommended)
+     python create-vpc-endpoints.py
+     
+     # Option 2: Update network stack (if using updated template)
+     python deploy-stacks.py --stack network
+     
+     # Option 3: Create manually via AWS CLI
+     aws ec2 create-vpc-endpoint \
+         --vpc-id vpc-xxx \
+         --service-name com.amazonaws.us-east-1.logs \
+         --vpc-endpoint-type Interface \
+         --subnet-ids subnet-xxx subnet-yyy \
+         --security-group-ids sg-xxx
+     ```
+   - **Note**: It may take a few minutes for endpoints to become available
+   - **Alternative**: If you don't need VPC access, temporarily remove VPC configuration:
+     ```bash
+     aws lambda update-function-configuration \
+         --function-name diamonddrip-production-prediction-server \
+         --vpc-config '{}'
+     ```
+     ⚠️ This will disconnect Lambda from RDS database
+
 ## Cost Estimation
 
 **Free Tier Eligible:**
@@ -608,9 +689,13 @@ aws cloudformation describe-stack-events \
 - RDS db.t3.micro: ~$15/month
 - S3: ~$0.023/GB storage
 - CloudFront: ~$0.085/GB data transfer
-- NAT Gateway: ~$32/month + data transfer
+- NAT Gateway: ~$32/month + data transfer (optional, if not using VPC endpoints)
+- VPC Endpoints: ~$7/month per endpoint (CloudWatch Logs + Secrets Manager = ~$14/month)
 
-**Total: ~$50-60/month** for low to moderate traffic
+**Total: ~$50-60/month** for low to moderate traffic (with NAT Gateway)
+**Total: ~$30-40/month** for low to moderate traffic (with VPC endpoints instead of NAT Gateway)
+
+**Cost Optimization Tip**: Use VPC endpoints instead of NAT Gateway if you only need access to AWS services (CloudWatch, Secrets Manager). NAT Gateway is only needed if you need general internet access.
 
 ## Security
 

@@ -69,6 +69,14 @@ aws/deployment-state-*.json
 *.log
 logs/
 
+# Temporary files and build artifacts
+*.zip
+*.tmp
+*.temp
+*.bak
+*.backup
+*.cache
+
 # Node modules (if any JavaScript dependencies are added)
 node_modules/
 npm-debug.log*

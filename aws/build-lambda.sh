@@ -31,3 +31,4 @@ echo "Package size: $(du -h lambda-package.zip | cut -f1)"
 
 
 
+

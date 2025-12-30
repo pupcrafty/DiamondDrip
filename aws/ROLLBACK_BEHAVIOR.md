@@ -194,3 +194,4 @@ aws cloudformation describe-stack-events \
 - **Your current setup**: Good - Database has snapshot protection
 
 
+

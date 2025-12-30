@@ -57,19 +57,19 @@ def update_client_files(api_endpoint):
                 )
                 path.write_text(new_content, encoding='utf-8')
                 updated.append(file_path)
-                print(f"  ✓ Updated: {file_path}")
+                print(f"  SUCCESS: Updated: {file_path}")
             else:
                 print(f"  ⚠ Pattern not found in: {file_path}")
         
         except Exception as e:
-            print(f"  ✗ Error updating {file_path}: {e}")
+                print(f"  ERROR: Error updating {file_path}: {e}")
     
     if updated:
-        print(f"\n✓ Updated {len(updated)} file(s)")
+        print(f"\nSUCCESS: Updated {len(updated)} file(s)")
         print(f"\nNew endpoint: {prediction_url}")
         return True
     else:
-        print("\n✗ No files were updated")
+        print("\nERROR: No files were updated")
         return False
 
 def main():
@@ -93,17 +93,18 @@ def main():
         api_endpoint = get_api_endpoint(args.stack_name, args.region)
     
     if not api_endpoint:
-        print("✗ Could not get API endpoint")
+        print("ERROR: Could not get API endpoint")
         sys.exit(1)
     
     if update_client_files(api_endpoint):
-        print("\n✓ Client configuration updated successfully!")
+        print("\nSUCCESS: Client configuration updated successfully!")
     else:
-        print("\n✗ Failed to update client configuration")
+        print("\nERROR: Failed to update client configuration")
         sys.exit(1)
 
 if __name__ == '__main__':
     main()
+
 
 
 

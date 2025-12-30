@@ -404,7 +404,7 @@ Examples:
     )
     
     parser.add_argument('--stack', '-s', 
-                       choices=['network', 'database', 'application', 'frontend'],
+                       choices=['network', 'database', 'application', 'frontend', 'diagnostics-frontend'],
                        help='Diagnose specific stack')
     parser.add_argument('--stack-name', 
                        help='Diagnose stack by exact name')

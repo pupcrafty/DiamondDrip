@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Upload player client files to S3 bucket
+Upload diagnostics client files to S3 bucket
 Maintains directory structure for relative paths
 """
 import boto3
@@ -8,8 +8,8 @@ import os
 from pathlib import Path
 import sys
 
-def upload_player_client(bucket_name, region='us-east-1', api_endpoint=None):
-    """Upload player client files to S3"""
+def upload_diagnostics_client(bucket_name, region='us-east-1', api_endpoint=None):
+    """Upload diagnostics client files to S3"""
     s3 = boto3.client('s3', region_name=region)
     
     # Base directory for player files
@@ -20,20 +20,32 @@ def upload_player_client(bucket_name, region='us-east-1', api_endpoint=None):
         print(f"[ERROR] Player directory not found: {player_dir}")
         return False
     
-    print(f"Uploading player client files to S3 bucket: {bucket_name}")
-    print(f"Source directory: {player_dir}")
+    diagnostics_dir = player_dir / 'diagnostics'
+    if not diagnostics_dir.exists():
+        print(f"[ERROR] Diagnostics directory not found: {diagnostics_dir}")
+        return False
+    
+    print(f"Uploading diagnostics client files to S3 bucket: {bucket_name}")
+    print(f"Source directory: {diagnostics_dir}")
     
     # Files to upload (maintaining structure)
+    # Diagnostics HTML files go to root, but they reference ../beatDetector/ and ../config/
     files_to_upload = [
-        # Player client files
-        ('playerClient/index.html', 'index.html'),
-        ('playerClient/js/game.js', 'js/game.js'),
-        ('playerClient/js/marker.js', 'js/marker.js'),
-        ('playerClient/js/target.js', 'js/target.js'),
-        ('playerClient/js/beacon.js', 'js/beacon.js'),
-        ('playerClient/diagnostic.html', 'diagnostic.html'),
+        # Diagnostics HTML files (to root)
+        ('diagnostics/diagnostic.html', 'diagnostic.html'),
+        ('diagnostics/beacon.html', 'beacon.html'),
+        ('diagnostics/detectorTest.html', 'detectorTest.html'),
+        ('diagnostics/legacyDetectorTest.html', 'legacyDetectorTest.html'),
+        ('diagnostics/microphoneInfo.html', 'microphoneInfo.html'),
+        ('diagnostics/predictionCallDiagnostic.html', 'predictionCallDiagnostic.html'),
+        ('diagnostics/simpleDetectorTest.html', 'simpleDetectorTest.html'),
         
-        # Beat detector files
+        # Diagnostics JS files (to js/ directory)
+        ('diagnostics/js/detectorTest.js', 'js/detectorTest.js'),
+        ('diagnostics/js/legacyBeatDetector.js', 'js/legacyBeatDetector.js'),
+        ('diagnostics/js/simpleDetectorTest.js', 'js/simpleDetectorTest.js'),
+        
+        # Beat detector files (to ../beatDetector/js/ from diagnostics root, so beatDetector/js/)
         ('beatDetector/js/logger.js', 'beatDetector/js/logger.js'),
         ('beatDetector/js/beatDetection.js', 'beatDetector/js/beatDetection.js'),
         ('beatDetector/js/bpmEstimator.js', 'beatDetector/js/bpmEstimator.js'),
@@ -41,24 +53,16 @@ def upload_player_client(bucket_name, region='us-east-1', api_endpoint=None):
         ('beatDetector/js/rhythmPredictor.js', 'beatDetector/js/rhythmPredictor.js'),
         ('beatDetector/js/beat-worklet.js', 'beatDetector/js/beat-worklet.js'),
         
-        # Config files
+        # Config files (to ../config/ from diagnostics root, so config/)
         ('config/config.js', 'config/config.js'),
-        
-        # Database viewer (from aws directory)
-        (None, 'viewer.html'),  # Special case - handled below
     ]
     
     uploaded = 0
     failed = 0
     
     for file_entry in files_to_upload:
-        if file_entry[0] is None:
-            # Special case: viewer.html from aws directory
-            relative_path, s3_key = file_entry
-            source_file = aws_dir / 'viewer.html'
-        else:
-            relative_path, s3_key = file_entry
-            source_file = player_dir / relative_path
+        relative_path, s3_key = file_entry
+        source_file = player_dir / relative_path
         
         if not source_file.exists():
             print(f"  [WARNING] File not found: {source_file}")
@@ -70,34 +74,60 @@ def upload_player_client(bucket_name, region='us-east-1', api_endpoint=None):
             with open(source_file, 'rb') as f:
                 content = f.read()
             
-            # If it's game.js and we have an API endpoint, update it
-            if s3_key == 'js/game.js' and api_endpoint:
+            # If it's a diagnostic HTML file and we have an API endpoint, update prediction server URLs
+            if s3_key.endswith('.html') and api_endpoint:
                 content_str = content.decode('utf-8')
-                # Update PREDICTION_SERVER_URL
                 import re
+                
+                # Update PREDICTION_SERVER_URL constant (handles both single and double quotes)
                 content_str = re.sub(
                     r"const PREDICTION_SERVER_URL = ['\"](https?://[^'\"]+)['\"]",
                     f"const PREDICTION_SERVER_URL = '{api_endpoint}/prediction'",
                     content_str
                 )
-                content = content_str.encode('utf-8')
-            
-            # If it's viewer.html and we have an API endpoint, update it
-            if s3_key == 'viewer.html' and api_endpoint:
-                content_str = content.decode('utf-8')
-                # Update API endpoint in viewer
-                import re
-                # Replace the API_BASE assignment with the actual endpoint
+                
+                # Update default input values - replace localhost URLs in value attributes
+                # Handles: value="https://localhost:8444/prediction" or value='https://localhost:8444/prediction'
                 content_str = re.sub(
-                    r"const API_BASE = window\.API_ENDPOINT \|\| '[^']*';",
-                    f"const API_BASE = window.API_ENDPOINT || '{api_endpoint}';",
+                    r'(value=["\'])https?://localhost:\d+/prediction(["\'])',
+                    rf'\1{api_endpoint}/prediction\2',
                     content_str
                 )
+                
+                # Update placeholder text - replace localhost URLs in placeholder attributes
+                # Handles: placeholder="https://localhost:8444/prediction" or placeholder='https://localhost:8444/prediction'
+                content_str = re.sub(
+                    r'(placeholder=["\'])https?://localhost:\d+/prediction(["\'])',
+                    rf'\1{api_endpoint}/prediction\2',
+                    content_str
+                )
+                
+                # Update any other localhost:port references (for microphoneInfo.html and others)
+                # This catches localhost:9001, localhost:8444, etc. but preserves paths
+                content_str = re.sub(
+                    r'https?://localhost:\d+([^"\'>\s]*)',
+                    lambda m: f'{api_endpoint}{m.group(1) if m.group(1) else ""}',
+                    content_str
+                )
+                
+                # Also update any remaining localhost references without port (fallback)
+                content_str = re.sub(
+                    r'https?://localhost([^"\'>\s]*)',
+                    lambda m: f'{api_endpoint}{m.group(1) if m.group(1) else ""}',
+                    content_str
+                )
+                
                 content = content_str.encode('utf-8')
             
-            # Upload to S3
-            content_type = 'text/html' if source_file.suffix == '.html' else 'application/javascript' if source_file.suffix == '.js' else 'text/plain'
+            # Determine content type
+            if source_file.suffix == '.html':
+                content_type = 'text/html'
+            elif source_file.suffix == '.js':
+                content_type = 'application/javascript'
+            else:
+                content_type = 'text/plain'
             
+            # Upload to S3
             s3.put_object(
                 Bucket=bucket_name,
                 Key=s3_key,
@@ -144,9 +174,9 @@ def invalidate_cloudfront(distribution_id, region='us-east-1'):
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description='Upload player client to S3')
+    parser = argparse.ArgumentParser(description='Upload diagnostics client to S3')
     parser.add_argument('--bucket', help='S3 bucket name')
-    parser.add_argument('--stack-name', default='diamonddrip-production', help='CloudFormation stack name')
+    parser.add_argument('--stack-name', default='diamonddrip-production-diagnostics-frontend', help='CloudFormation stack name')
     parser.add_argument('--region', default='us-east-1', help='AWS region')
     parser.add_argument('--api-endpoint', help='API Gateway endpoint (auto-detected if not provided)')
     parser.add_argument('--invalidate', action='store_true', help='Invalidate CloudFront cache')
@@ -159,27 +189,33 @@ def main():
         try:
             outputs = cf.describe_stacks(StackName=args.stack_name)['Stacks'][0]['Outputs']
             outputs_dict = {o['OutputKey']: o['OutputValue'] for o in outputs}
-            args.bucket = outputs_dict.get('PlayerClientBucketName')
+            args.bucket = outputs_dict.get('DiagnosticsClientBucketName')
             if not args.bucket:
-                print(f"[ERROR] Could not find PlayerClientBucketName in stack outputs")
+                print(f"[ERROR] Could not find DiagnosticsClientBucketName in stack outputs")
                 sys.exit(1)
         except Exception as e:
             print(f"[ERROR] Could not get bucket name from stack: {e}")
             sys.exit(1)
     
-    # Get API endpoint if not provided
+    # Get API endpoint if not provided (try to get from application stack)
     if not args.api_endpoint:
         cf = boto3.client('cloudformation', region_name=args.region)
         try:
-            outputs = cf.describe_stacks(StackName=args.stack_name)['Stacks'][0]['Outputs']
-            outputs_dict = {o['OutputKey']: o['OutputValue'] for o in outputs}
-            args.api_endpoint = outputs_dict.get('ApiEndpoint')
+            # Try to get from application stack
+            # Stack name format: {project}-{env}-diagnostics-frontend
+            # Application stack format: {project}-{env}-application
+            stack_parts = args.stack_name.split('-')
+            if len(stack_parts) >= 3:
+                app_stack_name = f"{stack_parts[0]}-{stack_parts[1]}-application"
+                outputs = cf.describe_stacks(StackName=app_stack_name)['Stacks'][0]['Outputs']
+                outputs_dict = {o['OutputKey']: o['OutputValue'] for o in outputs}
+                args.api_endpoint = outputs_dict.get('ApiEndpoint')
         except:
             pass
     
     # Upload files
-    if upload_player_client(args.bucket, args.region, args.api_endpoint):
-        print(f"\n[OK] Player client uploaded successfully!")
+    if upload_diagnostics_client(args.bucket, args.region, args.api_endpoint):
+        print(f"\n[OK] Diagnostics client uploaded successfully!")
         
         # Invalidate CloudFront if requested
         if args.invalidate:
@@ -187,7 +223,7 @@ def main():
             try:
                 outputs = cf.describe_stacks(StackName=args.stack_name)['Stacks'][0]['Outputs']
                 outputs_dict = {o['OutputKey']: o['OutputValue'] for o in outputs}
-                distribution_id = outputs_dict.get('PlayerClientDistributionId')
+                distribution_id = outputs_dict.get('DiagnosticsClientDistributionId')
                 if distribution_id:
                     invalidate_cloudfront(distribution_id, args.region)
             except Exception as e:
@@ -198,9 +234,9 @@ def main():
         try:
             outputs = cf.describe_stacks(StackName=args.stack_name)['Stacks'][0]['Outputs']
             outputs_dict = {o['OutputKey']: o['OutputValue'] for o in outputs}
-            cloudfront_url = outputs_dict.get('PlayerClientURL')
+            cloudfront_url = outputs_dict.get('DiagnosticsClientURL')
             if cloudfront_url:
-                print(f"\nPlayer client available at:")
+                print(f"\nDiagnostics client available at:")
                 print(f"  https://{cloudfront_url}")
         except:
             pass
@@ -210,6 +246,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
 

@@ -69,7 +69,7 @@ function drawStar(ctx, x, y, outerRadius, innerRadius) {
 // -----------------------------
 // Prediction Server Integration
 // -----------------------------
-const PREDICTION_SERVER_URL = 'https://localhost:8444/prediction';
+const PREDICTION_SERVER_URL = 'https://le71czez6a.execute-api.us-east-1.amazonaws.com/production/prediction';
 let lastPredictionSent = null; // Track last prediction sent to avoid duplicates
 let serverIP = null; // Cache the server IP
 let currentServerURL = PREDICTION_SERVER_URL; // Track current URL (may switch from localhost to IP)

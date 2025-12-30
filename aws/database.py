@@ -22,7 +22,8 @@ class PredictionDatabase:
     """PostgreSQL database for storing prediction data"""
     
     def __init__(self, host: str, port: int = 5432, database: str = 'diamonddrip', 
-                 user: str = None, password: str = None, pool_size: int = 5):
+                 user: str = None, password: str = None, pool_size: int = 5, 
+                 connect_timeout: int = 10):
         if not PSYCOPG2_AVAILABLE:
             raise ImportError("psycopg2 is required for PostgreSQL support. Install with: pip install psycopg2-binary")
         
@@ -33,7 +34,9 @@ class PredictionDatabase:
         self.password = password
         
         # Create connection pool for Lambda (reuse connections)
+        # Use longer timeout for VPC connections (default 10 seconds)
         try:
+            print(f"Creating connection pool with timeout={connect_timeout}s, pool_size={pool_size}")
             self.pool = SimpleConnectionPool(
                 minconn=1,
                 maxconn=pool_size,
@@ -42,13 +45,22 @@ class PredictionDatabase:
                 database=database,
                 user=user,
                 password=password,
-                connect_timeout=5
+                connect_timeout=connect_timeout,
+                # Additional connection parameters for better reliability
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=5
             )
             
-            # Initialize database schema
+            # Test the connection by initializing the database schema
+            print("Testing database connection...")
             self.init_database()
+            print("Database connection pool created and tested successfully")
         except Exception as e:
             print(f"Error creating database connection pool: {e}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
             raise
     
     def init_database(self):
@@ -105,16 +117,46 @@ class PredictionDatabase:
     def get_connection(self):
         """Get a database connection from the pool"""
         conn = None
+        retries = 2
+        for attempt in range(retries):
+            try:
+                conn = self.pool.getconn()
+                # Test the connection is still alive
+                with conn.cursor() as cursor:
+                    cursor.execute('SELECT 1')
+                    cursor.fetchone()
+                break  # Connection is good, exit retry loop
+            except Exception as e:
+                if conn:
+                    try:
+                        self.pool.putconn(conn, close=True)  # Close bad connection
+                    except:
+                        pass
+                    conn = None
+                if attempt < retries - 1:
+                    print(f"Connection attempt {attempt + 1} failed: {e}, retrying...")
+                else:
+                    raise
+        
         try:
-            conn = self.pool.getconn()
             yield conn
         except Exception as e:
             if conn:
-                conn.rollback()
+                try:
+                    conn.rollback()
+                except:
+                    pass
             raise
         finally:
             if conn:
-                self.pool.putconn(conn)
+                try:
+                    self.pool.putconn(conn)
+                except Exception as e:
+                    print(f"Warning: Error returning connection to pool: {e}")
+                    try:
+                        self.pool.putconn(conn, close=True)
+                    except:
+                        pass
     
     def insert_prediction(self, client_timestamp: str, server_timestamp: str, 
                          data: Dict[str, Any], hashed_ip: Optional[str] = None) -> int:
@@ -150,7 +192,16 @@ class PredictionDatabase:
                     ORDER BY created_at DESC
                     LIMIT %s
                 ''', (limit,))
-                return [dict(row) for row in cursor.fetchall()]
+                rows = cursor.fetchall()
+                # Convert datetime objects to ISO format strings for JSON serialization
+                result = []
+                for row in rows:
+                    row_dict = dict(row)
+                    # Convert created_at datetime to ISO format string
+                    if 'created_at' in row_dict and isinstance(row_dict['created_at'], datetime):
+                        row_dict['created_at'] = row_dict['created_at'].isoformat()
+                    result.append(row_dict)
+                return result
     
     def get_average_bpm(self) -> Optional[float]:
         """Get the average BPM from all stored predictions"""
@@ -224,6 +275,7 @@ class PredictionDatabase:
                     'max_bpm': float(stats[2]) if stats[2] is not None else None,
                     'unique_data_sources': unique_sources
                 }
+
 
 
 
