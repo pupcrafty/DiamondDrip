@@ -67,6 +67,7 @@ def upload_player_client(bucket_name, region='us-east-1', api_endpoint=None):
         ('beatDetector/js/bpmEstimator.js', 'beatDetector/js/bpmEstimator.js'),
         ('beatDetector/js/energyClassifier.js', 'beatDetector/js/energyClassifier.js'),
         ('beatDetector/js/rhythmPredictor.js', 'beatDetector/js/rhythmPredictor.js'),
+        ('beatDetector/js/sustainedBeatDetector.js', 'beatDetector/js/sustainedBeatDetector.js'),
         ('beatDetector/js/beat-worklet.js', 'beatDetector/js/beat-worklet.js'),
         
         # Config files

@@ -81,6 +81,81 @@
         .pattern-slot.beat-start.active {
             background-color: #44cc44;
         }
+        .pattern-slot.sustained {
+            border: 2px solid #ffff00;
+            box-shadow: 0 0 6px #ffff00;
+        }
+        .pattern-slot.sustained.active {
+            background-color: #ffff44;
+            color: #000;
+            font-size: 8px;
+        }
+        .pattern-slot.sustained.beat-start.active {
+            background-color: #ffcc44;
+        }
+        .pattern-slot.sustained:not(.active) {
+            background-color: #444422;
+        }
+        .pattern-slot.sustained.beat-start:not(.active) {
+            background-color: #664422;
+        }
+        /* Sustained beats in predictions - Hyper (combined) prediction */
+        .pattern-slot.sustained-hyper {
+            border: 2px solid #00ffff;
+            box-shadow: 0 0 6px #00ffff;
+        }
+        .pattern-slot.sustained-hyper.active {
+            background-color: #44ffff;
+            color: #000;
+            font-size: 8px;
+        }
+        .pattern-slot.sustained-hyper.beat-start.active {
+            background-color: #00cccc;
+        }
+        .pattern-slot.sustained-hyper:not(.active) {
+            background-color: #224444;
+        }
+        .pattern-slot.sustained-hyper.beat-start:not(.active) {
+            background-color: #224466;
+        }
+        /* Sustained beats in predictions - History prediction */
+        .pattern-slot.sustained-history {
+            border: 2px solid #4488ff;
+            box-shadow: 0 0 6px #4488ff;
+        }
+        .pattern-slot.sustained-history.active {
+            background-color: #6699ff;
+            color: #000;
+            font-size: 8px;
+        }
+        .pattern-slot.sustained-history.beat-start.active {
+            background-color: #4488cc;
+        }
+        .pattern-slot.sustained-history:not(.active) {
+            background-color: #222244;
+        }
+        .pattern-slot.sustained-history.beat-start:not(.active) {
+            background-color: #222266;
+        }
+        /* Sustained beats in predictions - Correct patterns prediction */
+        .pattern-slot.sustained-correct {
+            border: 2px solid #ff8844;
+            box-shadow: 0 0 6px #ff8844;
+        }
+        .pattern-slot.sustained-correct.active {
+            background-color: #ffaa66;
+            color: #000;
+            font-size: 8px;
+        }
+        .pattern-slot.sustained-correct.beat-start.active {
+            background-color: #ff8844;
+        }
+        .pattern-slot.sustained-correct:not(.active) {
+            background-color: #442222;
+        }
+        .pattern-slot.sustained-correct.beat-start:not(.active) {
+            background-color: #662222;
+        }
         .pattern-list {
             margin-top: 15px;
         }
@@ -165,6 +240,7 @@
     <script src="../beatDetector/js/bpmEstimator.js"></script>
     <script src="../beatDetector/js/energyClassifier.js"></script>
     <script src="../beatDetector/js/rhythmPredictor.js"></script>
+    <script src="../beatDetector/js/sustainedBeatDetector.js"></script>
     <script src="js/simpleDetectorTest.js"></script>
 </body>
 </html>

@@ -345,10 +345,11 @@ async function startListening() {
                 ENERGY_CLASSIFIER.addRmsSample(rms);
                 ENERGY_CLASSIFIER.update();
                 
-                // Process beat as pulse in rhythm predictor
+                // Process beat as pulse in rhythm predictor and sustained beat detector
                 const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
                 if (hyperBPM !== null && hyperBPM > 0) {
                     RHYTHM_PREDICTOR.processPulse(time, hyperBPM);
+                    SUSTAINED_BEAT_DETECTOR.processPulse(time, avg);
                     lastPulseTime = time;
                 }
             },
@@ -366,11 +367,22 @@ async function startListening() {
                         data.time - lastPulseTime >= PULSE_GATE_TIME) {
                         lastPulseTime = data.time;
                         
-                        // Process pulse in rhythm predictor
+                        // Process pulse in rhythm predictor and sustained beat detector
                         const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
                         if (hyperBPM !== null && hyperBPM > 0) {
                             RHYTHM_PREDICTOR.processPulse(data.time, hyperBPM);
+                            SUSTAINED_BEAT_DETECTOR.processPulse(data.time, data.avg);
                         }
+                    }
+                }
+                
+                // Process diagnostic data for sustained beat detection (every diagnostic sample)
+                const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
+                if (hyperBPM !== null && hyperBPM > 0 && data.avg !== undefined) {
+                    const sustainedBeat = SUSTAINED_BEAT_DETECTOR.processDiagnostic(data.time, data.avg, hyperBPM);
+                    if (sustainedBeat !== null && sustainedBeat.duration32nd !== null) {
+                        // Update rhythm predictor with sustained beat information
+                        RHYTHM_PREDICTOR.processSustainedBeat(sustainedBeat.pulseTime, sustainedBeat.duration32nd, hyperBPM);
                     }
                 }
             }
@@ -413,6 +425,7 @@ function checkIfHasEnoughData() {
 function getPredictedBeatTimestamps(currentTime) {
     const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
     const hyperPrediction = RHYTHM_PREDICTOR.getHyperPredictedPhrasePattern();
+    const hyperPredictedDurations = RHYTHM_PREDICTOR.getHyperPredictedDurations();
     
     // Only use predictions - if no prediction available, return empty
     if (hyperBPM === null || hyperBPM <= 0 || hyperPrediction === null) {
@@ -442,85 +455,47 @@ function getPredictedBeatTimestamps(currentTime) {
     // Also check if we should use the phrase after next (if next phrase is too soon)
     const timeToNextPhrase = nextPhraseStart - currentTime;
     let targetPhraseStart = nextPhraseStart;
-    if (timeToNextPhrase < 0.5) {
-        // Next phrase is very soon, use the one after
+    if (timeToNextPhrase < 0.2) {
+        // Next phrase is very soon, use the one after (reduced threshold from 0.5s to 0.2s for faster startup)
         targetPhraseStart = nextPhraseStart + phraseDuration;
     }
     
-    // Generate timestamps from the predicted pattern
-    // Detect sustained beats (consecutive active slots) vs single beats
+    // Generate timestamps from the predicted pattern using predicted durations
     const timestamps = [];
-    const SUSTAINED_THRESHOLD = 4; // Minimum consecutive slots to be considered sustained (half a beat)
-    
-    // Group consecutive active slots together
-    let currentRun = [];
-    let runStartSlot = -1;
     
     for (let slot = 0; slot < hyperPrediction.length; slot++) {
         if (hyperPrediction[slot]) {
-            if (currentRun.length === 0) {
-                runStartSlot = slot;
-            }
-            currentRun.push(slot);
-        } else {
-            // End of run - process it
-            if (currentRun.length > 0) {
-                const isSustained = currentRun.length >= SUSTAINED_THRESHOLD;
-                const startSlot = runStartSlot;
-                const endSlot = currentRun[currentRun.length - 1];
-                
-                // Calculate timing for the start of the run
-                const beatNumber = Math.floor(startSlot / 8);
-                
-                // Include beats on first (0), second (1), third (2), or fourth (3) beat
-                if (beatNumber >= 0 && beatNumber <= 3) {
-                    const timeInPhrase = startSlot * thirtySecondNoteDuration;
-                    const beatTime = targetPhraseStart + timeInPhrase;
-                    
-                    // Calculate duration for sustained beats
-                    const duration = isSustained ? (endSlot - startSlot + 1) * thirtySecondNoteDuration : 0;
-                    
-                    // Only include future beats (at least 0.1 seconds in the future)
-                    if (beatTime > currentTime + 0.1) {
-                        timestamps.push({
-                            time: beatTime,
-                            slot: startSlot,
-                            phraseStart: targetPhraseStart,
-                            isSustained: isSustained,
-                            duration: duration,
-                            endSlot: endSlot
-                        });
-                    }
-                }
-                
-                currentRun = [];
-                runStartSlot = -1;
-            }
-        }
-    }
-    
-    // Handle run that extends to end of phrase
-    if (currentRun.length > 0) {
-        const isSustained = currentRun.length >= SUSTAINED_THRESHOLD;
-        const startSlot = runStartSlot;
-        const endSlot = currentRun[currentRun.length - 1];
-        
-        const beatNumber = Math.floor(startSlot / 8);
-        
-        if (beatNumber >= 0 && beatNumber <= 3) {
-            const timeInPhrase = startSlot * thirtySecondNoteDuration;
-            const beatTime = targetPhraseStart + timeInPhrase;
-            const duration = isSustained ? (endSlot - startSlot + 1) * thirtySecondNoteDuration : 0;
+            const beatNumber = Math.floor(slot / 8);
             
-            if (beatTime > currentTime + 0.1) {
-                timestamps.push({
-                    time: beatTime,
-                    slot: startSlot,
-                    phraseStart: targetPhraseStart,
-                    isSustained: isSustained,
-                    duration: duration,
-                    endSlot: endSlot
-                });
+            // Include beats on first (0), second (1), third (2), or fourth (3) beat
+            if (beatNumber >= 0 && beatNumber <= 3) {
+                const timeInPhrase = slot * thirtySecondNoteDuration;
+                const beatTime = targetPhraseStart + timeInPhrase;
+                
+                // Check if this slot has a predicted duration (sustained beat)
+                const duration32nd = (hyperPredictedDurations && hyperPredictedDurations[slot] !== null && hyperPredictedDurations[slot] !== undefined) 
+                    ? hyperPredictedDurations[slot] 
+                    : 0;
+                const isSustained = duration32nd > 0;
+                const duration = duration32nd * thirtySecondNoteDuration; // Convert to seconds
+                
+                // Only include future beats (at least 0.1 seconds in the future)
+                // Only add if we haven't already added this slot (check for previous slots in same sustained run)
+                const alreadyAdded = timestamps.some(ts => ts.slot === slot || (ts.isSustained && ts.slot < slot && slot <= ts.endSlot));
+                if (!alreadyAdded && beatTime > currentTime + 0.1) {
+                    // Calculate end slot for sustained beats
+                    const endSlot = isSustained ? Math.min(slot + Math.ceil(duration32nd) - 1, hyperPrediction.length - 1) : slot;
+                    
+                    timestamps.push({
+                        time: beatTime,
+                        slot: slot,
+                        phraseStart: targetPhraseStart,
+                        isSustained: isSustained,
+                        duration: duration,
+                        duration32nd: duration32nd,
+                        endSlot: endSlot
+                    });
+                }
             }
         }
     }
@@ -562,67 +537,121 @@ function gameLoop() {
             
             if (!spawnedPredictedBeats.has(beatKey) && beatInfo.time > t) {
                 // Spawn marker for this predicted beat
-                // Middle (1) for sustained beats, Left (0) or Right (2) for single beats
-                let targetIndex;
                 if (beatInfo.isSustained) {
-                    targetIndex = 1; // Middle target for sustained beats
+                    // For sustained beats, create TWO markers:
+                    // 1. Start marker: falls to left (0) or right (2) side, arrives when sustain starts
+                    // 2. End marker: falls to middle (1), arrives when sustain ends
+                    const startSideIndex = Math.random() < 0.5 ? 0 : 2;
+                    const startSide = targets[startSideIndex];
+                    const endTarget = targets[1]; // Middle target
+                    
+                    // Calculate spawn positions
+                    const [startTopX, startTopY] = getTopSpawnPosition(startSide.x);
+                    const [endTopX, endTopY] = getTopSpawnPosition(endTarget.x);
+                    
+                    // Calculate distances and fall times
+                    const startDx = startSide.x - startTopX;
+                    const startDy = startSide.y - startTopY;
+                    const startDistance = Math.sqrt(startDx * startDx + startDy * startDy);
+                    const startFallTime = startDistance / MARKER_FALL_SPEED;
+                    
+                    const endDx = endTarget.x - endTopX;
+                    const endDy = endTarget.y - endTopY;
+                    const endDistance = Math.sqrt(endDx * endDx + endDy * endDy);
+                    const endFallTime = endDistance / MARKER_FALL_SPEED;
+                    
+                    // Calculate arrival times
+                    const startArrivalTime = beatInfo.time; // When sustain starts
+                    const endArrivalTime = beatInfo.time + beatInfo.duration; // When sustain ends
+                    
+                    // Calculate total times and hold durations
+                    const startTotalTime = startArrivalTime - t;
+                    const startHoldDuration = startTotalTime - startFallTime;
+                    
+                    const endTotalTime = endArrivalTime - t;
+                    const endHoldDuration = endTotalTime - endFallTime;
+                    
+                    // Only create markers if we have enough time
+                    if (startHoldDuration >= 0 && startTotalTime > 0.01 && endHoldDuration >= 0 && endTotalTime > 0.01) {
+                        // Create start marker (on side, arrives when sustain starts)
+                        const startFallVx = (startDx / startDistance) * MARKER_FALL_SPEED;
+                        const startFallVy = (startDy / startDistance) * MARKER_FALL_SPEED;
+                        const startMarker = new Marker(startSide, t, startArrivalTime, startTopX, startTopY, startHoldDuration, startFallVx, startFallVy, 0, null, null); // pairedMarker will be set below
+                        
+                        // Create end marker (on middle, arrives when sustain ends)
+                        const endFallVx = (endDx / endDistance) * MARKER_FALL_SPEED;
+                        const endFallVy = (endDy / endDistance) * MARKER_FALL_SPEED;
+                        const endMarker = new Marker(endTarget, t, endArrivalTime, endTopX, endTopY, endHoldDuration, endFallVx, endFallVy, 0, startSide, null); // startSide stored for color reference
+                        
+                        // Link the markers together
+                        startMarker.pairedMarker = endMarker;
+                        endMarker.pairedMarker = startMarker;
+                        
+                        // Add markers to their targets
+                        startSide.markers.push(startMarker);
+                        endTarget.markers.push(endMarker);
+                        markers.push(startMarker);
+                        markers.push(endMarker);
+                        
+                        // Mark this beat as spawned
+                        spawnedPredictedBeats.add(beatKey);
+                        
+                        log('GAME', `🎮 [GAME] 🎯 Sustained beat markers spawned: Start (${startSideIndex === 0 ? 'left' : 'right'}) at ${startArrivalTime.toFixed(3)}s, End (middle) at ${endArrivalTime.toFixed(3)}s, Duration: ${beatInfo.duration.toFixed(3)}s`);
+                    }
                 } else {
-                    // For single beats, randomly choose left or right
-                    targetIndex = Math.random() < 0.5 ? 0 : 2;
-                }
-                const target = targets[targetIndex];
-                
-                // Calculate top spawn position (at top of screen, same X as target)
-                const [topX, topY] = getTopSpawnPosition(target.x);
-                
-                // Calculate distance from top to target
-                const dx = target.x - topX;
-                const dy = target.y - topY;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                
-                // Calculate fall time needed at fixed speed
-                const fallTime = distance / MARKER_FALL_SPEED;
-                
-                // Calculate total time available
-                const totalTime = beatInfo.time - t;
-                
-                // Calculate hold duration: hold for remaining time after fall
-                let holdDuration = totalTime - fallTime;
-                
-                // Only create marker if we have enough time for fall at fixed speed
-                // Skip markers that can't make it in time (consistent fall speed)
-                if (holdDuration < 0 || totalTime < 0.01) {
-                    // Not enough time - skip this marker to maintain consistent fall speed
-                    continue;
-                }
-                
-                // Always use fixed speed for consistent fall speeds
-                const fallVx = (dx / distance) * MARKER_FALL_SPEED;
-                const fallVy = (dy / distance) * MARKER_FALL_SPEED;
-                
-                // Create marker if we have enough time
-                if (totalTime > 0.01) {
+                    // For single beats, check if there's an active sustain and block same side
+                    let targetIndex;
+                    if (currentlySustainingSide === 0) {
+                        targetIndex = 2; // Right only
+                    } else if (currentlySustainingSide === 2) {
+                        targetIndex = 0; // Left only
+                    } else {
+                        // Middle sustaining or no sustain - random choice
+                        targetIndex = Math.random() < 0.5 ? 0 : 2;
+                    }
+                    const target = targets[targetIndex];
                     
-                    // Create marker with sustained duration if it's a sustained beat
-                    const sustainedDuration = beatInfo.isSustained ? beatInfo.duration : 0;
-                    const marker = new Marker(target, t, beatInfo.time, topX, topY, holdDuration, fallVx, fallVy, sustainedDuration);
+                    // Calculate top spawn position
+                    const [topX, topY] = getTopSpawnPosition(target.x);
                     
-                    // Add marker to target's markers array (at the end)
+                    // Calculate distance from top to target
+                    const dx = target.x - topX;
+                    const dy = target.y - topY;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // Calculate fall time needed at fixed speed
+                    const fallTime = distance / MARKER_FALL_SPEED;
+                    
+                    // Calculate total time available
+                    const totalTime = beatInfo.time - t;
+                    
+                    // Calculate hold duration: hold for remaining time after fall
+                    let holdDuration = totalTime - fallTime;
+                    
+                    // Only create marker if we have enough time for fall at fixed speed
+                    if (holdDuration < 0 || totalTime < 0.01) {
+                        continue;
+                    }
+                    
+                    // Always use fixed speed for consistent fall speeds
+                    const fallVx = (dx / distance) * MARKER_FALL_SPEED;
+                    const fallVy = (dy / distance) * MARKER_FALL_SPEED;
+                    
+                    // Create marker
+                    const marker = new Marker(target, t, beatInfo.time, topX, topY, holdDuration, fallVx, fallVy, 0);
+                    
+                    // Add marker to target's markers array
                     target.markers.push(marker);
                     markers.push(marker);
-                
+                    
                     // Mark this beat as spawned
                     spawnedPredictedBeats.add(beatKey);
                     
-                    // Update target's beat info - for sustained beats, use end time
-                    target.beatSpawn = -1; // Not using beat numbers anymore
-                    target.beatDisappear = beatInfo.isSustained ? (beatInfo.time + sustainedDuration) : beatInfo.time;
+                    target.beatSpawn = -1;
+                    target.beatDisappear = beatInfo.time;
                     
-                    const actualFallTime = fallTime;
-                    const sideName = targetIndex === 0 ? 'left' : targetIndex === 1 ? 'middle' : 'right';
-                    const beatType = beatInfo.isSustained ? 'sustained' : 'single';
-                    const durationInfo = beatInfo.isSustained ? ` Duration: ${sustainedDuration.toFixed(3)}s` : '';
-                    log('GAME', '🎮 [GAME] 🎯 Marker spawned for predicted beat (Target:', targetIndex, 'Side:', sideName, 'Type:', beatType, 'Beat time:', beatInfo.time.toFixed(3), 's Total time:', totalTime.toFixed(2), 's Hold:', holdDuration.toFixed(2), 's Fall:', actualFallTime.toFixed(2), 's Speed:', MARKER_FALL_SPEED.toFixed(1), 'px/s Distance:', distance.toFixed(1), 'px' + durationInfo + ')');
+                    const sideName = targetIndex === 0 ? 'left' : 'right';
+                    log('GAME', `🎮 [GAME] 🎯 Single beat marker spawned (${sideName}) at ${beatInfo.time.toFixed(3)}s`);
                 }
             }
         }
@@ -639,6 +668,38 @@ function gameLoop() {
     // Update markers
     for (const marker of markers) {
         marker.update(t);
+    }
+    
+    // Check if sustained beat should end (if marker's sustain period has ended)
+    if (currentlySustainingSide !== null && currentlySustainingSide === 1) {
+        // Check if any middle target markers are still in their sustain window
+        let hasActiveSustain = false;
+        for (const marker of markers) {
+            if (marker.target === targets[1] && marker.sustainedDuration > 0 && t < marker.tEnd) {
+                hasActiveSustain = true;
+                break;
+            }
+        }
+        if (!hasActiveSustain) {
+            // Sustained beat period ended - calculate bonus and end
+            const holdDuration = t - sustainedBeatStartTime;
+            const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
+            if (hyperBPM && hyperBPM > 0 && sustainedBeatDuration > 0) {
+                const beatDuration = 60.0 / hyperBPM;
+                const thirtySecondNoteDuration = beatDuration / 8;
+                const holdDuration32nd = holdDuration / thirtySecondNoteDuration;
+                const bonus32nd = Math.max(0, Math.floor(holdDuration32nd - 1)); // -1 because initial pulse counts as first 32nd
+                const bonusScore = bonus32nd;
+                if (bonusScore > 0) {
+                    totalScore += bonusScore;
+                    log('GAME', `🎮 [GAME] 🎯 Sustained beat bonus: ${bonusScore} points (held for ${holdDuration32nd.toFixed(2)} 32nd beats)`);
+                }
+            }
+            currentlySustainingSide = null;
+            sustainedBeatStartTime = null;
+            sustainedBeatDuration = 0;
+            sustainedBeatDuration32nd = 0;
+        }
     }
     
     // Remove markers that have left the yellow circle or are individually marked as hit
@@ -743,9 +804,77 @@ function gameLoop() {
         // Only draw if marker hasn't been hit and is on screen or near screen (within reasonable bounds)
         if (!marker.hit && marker.x > -100 && marker.x < WIDTH + 100 && marker.y > -100 && marker.y < HEIGHT + 100) {
             ctx.fillStyle = marker.target.color;  // Match target color
-            ctx.beginPath();
-            ctx.arc(marker.x, marker.y, MARKER_RADIUS, 0, Math.PI * 2);
-            ctx.fill();
+            
+            // Check if this is a sustained beat marker (has a paired marker)
+            if (marker.isSustainedBeatMarker() && marker.pairedMarker) {
+                // Draw sustained beat: two markers connected by a line
+                const startMarker = marker.tArrival < marker.pairedMarker.tArrival ? marker : marker.pairedMarker;
+                const endMarker = marker.tArrival < marker.pairedMarker.tArrival ? marker.pairedMarker : marker;
+                
+                // Only draw the line if we're processing the start marker (to avoid drawing twice)
+                if (marker === startMarker) {
+                    // Draw connecting line between the two markers
+                    // Always use current positions (whether falling or arrived) so line is visible during entire fall
+                    const startX = startMarker.x;
+                    const startY = startMarker.y;
+                    const endX = endMarker.x;
+                    const endY = endMarker.y;
+                    
+                    // Draw line connecting the two markers with gradient color
+                    ctx.lineWidth = MARKER_RADIUS * 1.5;
+                    ctx.lineCap = 'round';
+                    
+                    // Get colors
+                    const startColor = startMarker.target.color; // Red or Blue
+                    const endColor = endMarker.target.color; // Green
+                    
+                    // Parse RGB colors
+                    const parseColor = (colorStr) => {
+                        const match = colorStr.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+                        if (match) {
+                            return [parseInt(match[1]), parseInt(match[2]), parseInt(match[3])];
+                        }
+                        return [128, 128, 128];
+                    };
+                    
+                    const [r1, g1, b1] = parseColor(startColor);
+                    const [r2, g2, b2] = parseColor(endColor);
+                    
+                    // Draw line with gradient (multiple segments for smooth color transition)
+                    const numSegments = 30;
+                    for (let i = 0; i < numSegments; i++) {
+                        const segT = i / numSegments;
+                        const segT2 = (i + 1) / numSegments;
+                        
+                        const x1 = startX + (endX - startX) * segT;
+                        const y1 = startY + (endY - startY) * segT;
+                        const x2 = startX + (endX - startX) * segT2;
+                        const y2 = startY + (endY - startY) * segT2;
+                        
+                        // Interpolate color
+                        const r = Math.round(r1 + (r2 - r1) * segT);
+                        const g = Math.round(g1 + (g2 - g1) * segT);
+                        const b = Math.round(b1 + (b2 - b1) * segT);
+                        
+                        ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y1);
+                        ctx.lineTo(x2, y2);
+                        ctx.stroke();
+                    }
+                }
+                
+                // Draw the marker itself (circular)
+                ctx.fillStyle = marker.target.color;
+                ctx.beginPath();
+                ctx.arc(marker.x, marker.y, MARKER_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                // Draw normal circular marker (falling down to target)
+                ctx.beginPath();
+                ctx.arc(marker.x, marker.y, MARKER_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
+            }
         }
     }
     
@@ -952,9 +1081,19 @@ canvas.addEventListener('touchend', (event) => {
 });
 
 // Track sustained press state for middle button
+// Track sustained input state
 let middleButtonHeld = false;
 let middleButtonHoldStartTime = null;
 let middleButtonCheckInterval = null;
+let leftButtonHeld = false;
+let rightButtonHeld = false;
+let mouseDragging = false;
+let mouseDragStartTarget = null;
+let touchDragPositions = new Map(); // Track touch positions for 2-finger support: Map<touchId, {targetIndex, startTime, startX, startY}>
+let currentlySustainingSide = null; // null, 0 (left), 1 (middle), or 2 (right) - tracks which side is currently sustaining
+let sustainedBeatStartTime = null; // When the current sustained beat started
+let sustainedBeatDuration = 0; // Duration of the current sustained beat
+let sustainedBeatDuration32nd = 0; // Duration in 32nd beats
 
 // Keyboard handler for 3-button system
 // Left (0): A or ArrowLeft - single beat

@@ -225,6 +225,7 @@ async function startDetection() {
         BPM_ESTIMATOR.reset();
         ENERGY_CLASSIFIER.reset();
         RHYTHM_PREDICTOR.reset();
+        SUSTAINED_BEAT_DETECTOR.reset();
         patternStartTime = performance.now() / 1000;
         lastPulseTime = -999;
         
@@ -262,6 +263,9 @@ async function startDetection() {
                     const hyperBpm = BPM_ESTIMATOR.getHyperSmoothedBPM();
                     RHYTHM_PREDICTOR.processPulse(data.time, hyperBpm);
                     
+                    // Process pulse for sustained beat detection
+                    SUSTAINED_BEAT_DETECTOR.processPulse(data.time, data.avg);
+                    
                     if (currentPhase === 'detecting') {
                         console.log('🪩 [BEACON] 🎵 Pulse detected, building rhythm pattern...');
                         updateStatus(`Pulse detected. Building rhythm pattern...`);
@@ -272,6 +276,13 @@ async function startDetection() {
                 BPM_ESTIMATOR.update();
                 
                 const hyperBpm = BPM_ESTIMATOR.getHyperSmoothedBPM();
+                
+                // Process diagnostic data for sustained beat detection
+                const sustainedBeat = SUSTAINED_BEAT_DETECTOR.processDiagnostic(data.time, data.avg, hyperBpm);
+                if (sustainedBeat !== null && sustainedBeat.duration32nd !== null) {
+                    // Update rhythm predictor with sustained beat information
+                    RHYTHM_PREDICTOR.processSustainedBeat(sustainedBeat.pulseTime, sustainedBeat.duration32nd, hyperBpm);
+                }
                 const hyperPrediction = RHYTHM_PREDICTOR.getHyperPredictedPhrasePattern();
                 const energyLevel = ENERGY_CLASSIFIER.getCurrentEnergyLevel();
                 if (hyperBpm !== null && currentPhase === 'detecting') {
@@ -323,6 +334,7 @@ function stopDetection() {
     BPM_ESTIMATOR.reset();
     ENERGY_CLASSIFIER.reset();
     RHYTHM_PREDICTOR.reset();
+    SUSTAINED_BEAT_DETECTOR.reset();
     lastPulseTime = -999;
     patternStartTime = performance.now() / 1000;
     lastBeaconPattern = null;

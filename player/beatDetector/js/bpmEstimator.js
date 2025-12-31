@@ -6,9 +6,10 @@
 const BPM_ESTIMATOR = (function() {
     // Constants
     const MAX_BEAT_TIMES = 20; // Track more beats for better statistics
-    const MIN_BEATS_FOR_BPM = 4; // Minimum beats needed for BPM estimate
+    const MIN_BEATS_FOR_BPM = 3; // Minimum beats needed for BPM estimate (reduced from 4 for faster startup)
     const MAX_DROPPED_VALUES = 20; // Max length for dropped values array
     const TOLERANCE = 0.15; // 15% tolerance for matching patterns
+    const MAX_BPM_BEFORE_HALVING = 200; // If BPM exceeds this value, assume double counting and halve it
 
     // State
     let beatTimes = []; // Array of beat timestamps
@@ -57,8 +58,8 @@ const BPM_ESTIMATOR = (function() {
             return interval >= medianInterval * 0.5 && interval <= medianInterval * 2.0;
         });
         
-        // Need at least 3 intervals after filtering
-        if (filteredIntervals.length < 3) {
+        // Need at least 2 intervals after filtering (reduced from 3 for faster startup)
+        if (filteredIntervals.length < 2) {
             return smoothedBPM;
         }
         
@@ -106,8 +107,8 @@ const BPM_ESTIMATOR = (function() {
         
         const newSample = smoothedBPM;
         
-        // If we have fewer than 4 samples, just add it and use the average
-        if (bpmSamples.length < 4) {
+        // If we have fewer than 2 samples, just add it and use the average (reduced from 4 for faster startup)
+        if (bpmSamples.length < 2) {
             bpmSamples.push(newSample);
             let localAvg = bpmSamples.reduce((a, b) => a + b, 0) / bpmSamples.length;
             
@@ -136,7 +137,7 @@ const BPM_ESTIMATOR = (function() {
             if (hyperSmoothedBPMHistory.length > MAX_BPM_HISTORY) {
                 hyperSmoothedBPMHistory.shift();
             }
-            if (!hasLoggedHyperSmoothedBPM && bpmSamples.length >= 2) {
+            if (!hasLoggedHyperSmoothedBPM && bpmSamples.length >= 1) {
                 log('BPM', '🎯 [BPM CALCULATION] First hyper-smoothed BPM calculated:', hyperSmoothedBPM.toFixed(1));
                 hasLoggedHyperSmoothedBPM = true;
             }

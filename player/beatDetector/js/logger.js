@@ -14,6 +14,8 @@ class Logger {
             PREDICTION_INIT: true,        // 🔮 Prediction initialization
             PREDICTION_HYPER: true,       // 🌟 Hyper prediction events
             PULSE_PATTERN: true,          // 🎵 Pulse pattern listening
+            SUSTAINED: false,             // 🎵 Sustained beat detection events
+            SUSTAINED_PREDICTION: false,  // 🎯 Sustained beat prediction events
             ERROR: true,                   // ❌ Errors (always recommended to keep on)
             TARGET_SCORES: true            // 📊 Show target scores next to each target
         };
@@ -28,6 +30,8 @@ class Logger {
             'PREDICTION_INIT': 'PREDICTION_INIT',
             'PREDICTION_HYPER': 'PREDICTION_HYPER',
             'PULSE_PATTERN': 'PULSE_PATTERN',
+            'SUSTAINED': 'SUSTAINED',
+            'SUSTAINED_PREDICTION': 'SUSTAINED_PREDICTION',
             'ERROR': 'ERROR'
         };
     }

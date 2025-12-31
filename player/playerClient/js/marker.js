@@ -2,11 +2,13 @@
 // Marker class
 // -----------------------------
 class Marker {
-    constructor(target, tSpawn, tArrival, topX, topY, holdDuration, fallVx, fallVy, sustainedDuration = 0) {
-        this.target = target;  // Reference to the target this marker is moving toward
+    constructor(target, tSpawn, tArrival, topX, topY, holdDuration, fallVx, fallVy, sustainedDuration = 0, startSide = null, pairedMarker = null) {
+        this.target = target;  // Reference to the target this marker is moving toward (destination)
+        this.startSide = startSide;  // For sustained beats: reference to the starting side target (left or right) - used for end marker
+        this.pairedMarker = pairedMarker;  // For sustained beats: reference to the other marker (start or end)
         this.tSpawn = tSpawn;  // Time when marker spawns
         this.tArrival = tArrival;  // Time when marker should arrive at target center
-        this.sustainedDuration = sustainedDuration;  // Duration of sustained beat (0 for single beats)
+        this.sustainedDuration = sustainedDuration;  // Duration of sustained beat (0 for single beats, not used for new system)
         this.tEnd = sustainedDuration > 0 ? tArrival + sustainedDuration : tArrival;  // Time when sustained beat ends
         
         // Top position where marker holds before falling
@@ -28,6 +30,10 @@ class Marker {
         this.hit = false;  // Whether this marker's target has been hit
     }
     
+    isSustainedBeatMarker() {
+        return this.pairedMarker !== null;
+    }
+    
     update(t) {
         if (this.hit) return;  // Don't update if target is already hit
         
@@ -44,12 +50,14 @@ class Marker {
     }
     
     hasLeftYellowCircle(currentTime) {
-        // For sustained beats, marker should stay on target until tEnd
-        if (this.sustainedDuration > 0) {
-            // Don't remove sustained markers until after the sustained duration ends
-            if (currentTime < this.tEnd) {
+        // For sustained beat markers, keep them visible until both markers have arrived and the line is drawn
+        if (this.pairedMarker !== null) {
+            // Keep both markers visible until the end marker has arrived
+            const endMarker = this.pairedMarker.tArrival > this.tArrival ? this.pairedMarker : this;
+            if (currentTime < endMarker.tArrival) {
                 return false;
             }
+            // After both have arrived, check normal removal logic
         }
         
         // Check if marker has left the yellow circle (clickable area)
