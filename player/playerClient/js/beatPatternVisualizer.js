@@ -103,10 +103,12 @@ function updatePatternDisplay(activePrediction, currentTime, markers = []) {
     const onset = activePrediction.onset || [];
     const durSlots = activePrediction.dur_slots || [];
     const phraseBeats = 4; // Standard 4-beat phrase
-    const slotsPerBeat = 32;
-    const totalSlots = phraseBeats * slotsPerBeat; // 128 slots
+    const slotsPerBeat = 8; // 8 thirty-second notes per beat (corrected from 32)
+    const slotsPerPhrase = phraseBeats * slotsPerBeat; // 32 slots per phrase
+    const numPhrases = 4; // 4 phrases in the prediction
+    const totalSlots = numPhrases * slotsPerPhrase; // 128 slots total (4 phrases)
     const beatDuration = 60.0 / bpm;
-    const phraseDuration = beatDuration * 4;
+    const phraseDuration = beatDuration * phraseBeats; // Duration of one phrase (4 beats)
     
     // Calculate phrase start time
     let phraseStart = activePrediction.phrase_start_time;
@@ -119,15 +121,16 @@ function updatePatternDisplay(activePrediction, currentTime, markers = []) {
         }
     }
     
-    // Calculate current position in pattern - fix negative issue
+    // Calculate current position in pattern - wrap at phrase boundary (32 slots), not total slots
     const timeSincePhraseStart = currentTime - phraseStart;
     let currentSlot = Math.floor(timeSincePhraseStart / slotMs);
     // Handle negative values properly
     if (currentSlot < 0) {
         // If we're before phrase start, wrap to end of previous phrase
-        currentSlot = totalSlots + (currentSlot % totalSlots);
+        currentSlot = slotsPerPhrase + (currentSlot % slotsPerPhrase);
     }
-    const currentSlotInPhrase = ((currentSlot % totalSlots) + totalSlots) % totalSlots; // Ensure positive
+    // Wrap at phrase boundary (32 slots), not total slots (128)
+    const currentSlotInPhrase = ((currentSlot % slotsPerPhrase) + slotsPerPhrase) % slotsPerPhrase; // 0-31
     
     // Store for marker visualization
     currentPhraseStart = phraseStart;
@@ -183,10 +186,10 @@ function updatePatternDisplay(activePrediction, currentTime, markers = []) {
     const slotElements = [];
     let html = '<div style="display: flex; flex-wrap: wrap; gap: 2px; align-items: flex-start;">';
     
-    // Add beat labels row
+    // Add phrase labels row (4 phrases)
     html += '<div style="width: 100%; display: flex; margin-bottom: 5px; font-size: 10px; color: #888;">';
-    for (let beat = 0; beat < phraseBeats; beat++) {
-        html += `<div style="flex: 1; text-align: center;">Beat ${beat + 1}</div>`;
+    for (let phrase = 0; phrase < numPhrases; phrase++) {
+        html += `<div style="flex: 1; text-align: center;">Phrase ${phrase + 1}</div>`;
     }
     html += '</div>';
     
@@ -196,7 +199,9 @@ function updatePatternDisplay(activePrediction, currentTime, markers = []) {
     for (let slot = 0; slot < totalSlots; slot++) {
         const isActive = slot < onset.length && onset[slot] > 0.5;
         const isSustained = isActive && durSlots && durSlots[slot] > 0;
-        const isCurrent = slot === currentSlotInPhrase;
+        // Highlight current slot in all phrases (slot % 32 matches currentSlotInPhrase)
+        const slotInPhrase = slot % slotsPerPhrase;
+        const isCurrent = slotInPhrase === currentSlotInPhrase;
         const hasMarker = slotToMarkers.has(slot);
         
         let className = 'pattern-slot';
@@ -216,12 +221,17 @@ function updatePatternDisplay(activePrediction, currentTime, markers = []) {
             sustainedWidth = Math.min(Math.ceil(durSlots[slot]), 8); // Max 8 slots wide
         }
         
-        // Add beat divider every 32 slots
-        if (slot > 0 && slot % slotsPerBeat === 0) {
+        // Add phrase divider every 32 slots (between phrases)
+        if (slot > 0 && slot % slotsPerPhrase === 0) {
+            html += '<div class="pattern-beat-divider" style="border-left: 2px solid #888; margin: 0 2px;"></div>';
+        }
+        // Add beat divider every 8 slots (within each phrase)
+        else if (slot > 0 && slot % slotsPerBeat === 0) {
             html += '<div class="pattern-beat-divider"></div>';
         }
         
-        const slotTitle = `Slot ${slot}${isActive ? ' (beat)' : ''}${isSustained ? ` (sustained ${durSlots[slot]} slots)` : ''}${hasMarker ? ' (marker)' : ''}`;
+        const phraseNum = Math.floor(slot / slotsPerPhrase) + 1;
+        const slotTitle = `Phrase ${phraseNum}, Slot ${slotInPhrase}${isActive ? ' (beat)' : ''}${isSustained ? ` (sustained ${durSlots[slot]} slots)` : ''}${hasMarker ? ' (marker)' : ''}`;
         html += `<div class="${className}" data-slot="${slot}" style="width: ${sustainedWidth * 8}px;" title="${slotTitle}"></div>`;
     }
     
@@ -242,10 +252,11 @@ function updatePatternDisplay(activePrediction, currentTime, markers = []) {
     const beatCount = onset.filter(v => v > 0.5).length;
     const currentBeat = Math.floor(currentSlotInPhrase / slotsPerBeat) + 1;
     const currentSlotInBeat = (currentSlotInPhrase % slotsPerBeat) + 1;
+    const currentPhraseNum = Math.floor(currentSlot / slotsPerPhrase) % numPhrases + 1;
     infoText.innerHTML = `
         <div style="margin-bottom: 5px;"><strong>Source:</strong> ${source} | <strong>BPM:</strong> ${bpm.toFixed(1)}</div>
-        <div style="margin-bottom: 5px;"><strong>Position:</strong> Beat ${currentBeat}, Slot ${currentSlotInBeat}/${slotsPerBeat} (Overall: ${currentSlotInPhrase + 1}/${totalSlots})</div>
-        <div><strong>Active Beats:</strong> ${beatCount} | <strong>Current Slot:</strong> ${currentSlotInPhrase + 1}</div>
+        <div style="margin-bottom: 5px;"><strong>Position:</strong> Phrase ${currentPhraseNum}, Beat ${currentBeat}, Slot ${currentSlotInBeat}/${slotsPerBeat} (Phrase slot: ${currentSlotInPhrase + 1}/${slotsPerPhrase})</div>
+        <div><strong>Active Beats:</strong> ${beatCount} | <strong>Current Slot in Phrase:</strong> ${currentSlotInPhrase + 1}</div>
     `;
 }
 

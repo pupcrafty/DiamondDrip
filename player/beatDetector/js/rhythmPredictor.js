@@ -539,6 +539,19 @@ const RHYTHM_PREDICTOR = (function() {
             return [...predictionAccuracy];
         },
 
+        // Process sustained beat information (stub - not currently implemented)
+        processSustainedBeat: function(pulseTime, duration32nd, hyperBPM) {
+            // TODO: Implement sustained beat processing if needed
+            // For now, this is a no-op to prevent errors
+        },
+
+        // Get hyper predicted durations (stub - not currently implemented)
+        getHyperPredictedDurations: function() {
+            // TODO: Implement duration prediction if needed
+            // For now, return null - callers should handle this
+            return null;
+        },
+
         // Reset all state
         reset: function() {
             currentPhraseStart = null;

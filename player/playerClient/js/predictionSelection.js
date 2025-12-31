@@ -58,7 +58,7 @@ function updatePredictionAccuracy(actualBeatTime) {
     if (hyperBPM !== null && hyperBPM > 0 && hyperPrediction !== null) {
         const beatDuration = 60.0 / hyperBPM;
         const phraseDuration = beatDuration * 4;
-        const slotDuration = beatDuration / 32;
+        const slotDuration = beatDuration / 8; // 8 thirty-second notes per beat (not 32)
         
         // Find nearest phrase start
         let phraseStart = getLastPhraseStartTime();
@@ -195,7 +195,7 @@ function getActivePrediction() {
     }
     
     const beatDuration = 60.0 / hyperBPM;
-    const slotMs = beatDuration / 32;
+    const slotMs = beatDuration / 8; // 8 thirty-second notes per beat (not 32)
     
     // Convert durations array to match server format (128 slots)
     const durSlots = [];

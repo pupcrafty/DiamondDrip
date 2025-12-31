@@ -37,6 +37,18 @@ function updateGameLogic(t) {
         const predictedBeats = getPredictedBeatTimestamps(t);
         const energyLevel = ENERGY_CLASSIFIER.getCurrentEnergyLevel();
         
+        // Debug: log prediction status periodically
+        if (Math.random() < 0.02) {
+            const activePred = typeof getActivePrediction === 'function' ? getActivePrediction() : null;
+            console.log('[MARKER SPAWN DEBUG] Prediction check:', {
+                hasEnoughData: true,
+                predictedBeatsCount: predictedBeats.length,
+                currentTime: t.toFixed(3),
+                activePredSource: activePred?.source || 'none',
+                activePredBPM: activePred?.bpm?.toFixed(1) || 'none'
+            });
+        }
+        
         // Debug: log when we have beats but they're not spawning
         if (predictedBeats.length > 0 && Math.random() < 0.01) {
             const targets = getTargets();
@@ -62,6 +74,23 @@ function updateGameLogic(t) {
         let markers = getMarkers();
         const spawnedPredictedBeats = getSpawnedPredictedBeats();
         let markersSpawned = 0;
+        
+        // Debug logging for marker spawning
+        if (predictedBeats.length > 0 && Math.random() < 0.05) {
+            const futureBeats = predictedBeats.filter(b => b.time > t);
+            const unspawnedFutureBeats = futureBeats.filter(b => {
+                const key = `${b.phraseStart}_${b.slot}`;
+                return !spawnedPredictedBeats.has(key);
+            });
+            console.log('[MARKER SPAWN DEBUG]', {
+                totalBeats: predictedBeats.length,
+                futureBeats: futureBeats.length,
+                unspawnedFutureBeats: unspawnedFutureBeats.length,
+                currentTime: t.toFixed(3),
+                firstFutureBeatTime: futureBeats.length > 0 ? futureBeats[0].time.toFixed(3) : 'none',
+                spawnedSetSize: spawnedPredictedBeats.size
+            });
+        }
         
         for (const beatInfo of predictedBeats) {
             const beatKey = `${beatInfo.phraseStart}_${beatInfo.slot}`;
@@ -169,6 +198,15 @@ function updateGameLogic(t) {
                     
                     // Only create marker if we have enough time for fall at fixed speed
                     if (holdDuration < 0 || totalTime < 0.01) {
+                        if (Math.random() < 0.1) {
+                            console.log('[MARKER SPAWN] Skipping beat - not enough time:', {
+                                beatTime: beatInfo.time.toFixed(3),
+                                currentTime: t.toFixed(3),
+                                totalTime: totalTime.toFixed(3),
+                                fallTime: fallTime.toFixed(3),
+                                holdDuration: holdDuration.toFixed(3)
+                            });
+                        }
                         continue;
                     }
                     
@@ -193,11 +231,30 @@ function updateGameLogic(t) {
                     
                     const sideName = targetIndex === 0 ? 'left' : 'right';
                     log('GAME', `🎮 [GAME] 🎯 Single beat marker spawned (${sideName}) at ${beatInfo.time.toFixed(3)}s`);
+                    console.log('[MARKER SPAWN] ✅ Marker created:', {
+                        beatKey: beatKey,
+                        beatTime: beatInfo.time.toFixed(3),
+                        currentTime: t.toFixed(3),
+                        totalTime: totalTime.toFixed(3),
+                        holdDuration: holdDuration.toFixed(3),
+                        side: sideName
+                    });
                     
                     // Track in outline
                     if (typeof GAME_LOOP_OUTLINE !== 'undefined') {
                         GAME_LOOP_OUTLINE.onMarkersSpawned(1, beatInfo);
                     }
+                }
+            } else {
+                // Debug: log why beat was skipped
+                if (Math.random() < 0.1 && beatInfo.time > t - 1.0) { // Only log beats in the recent past/future
+                    const reason = spawnedPredictedBeats.has(beatKey) ? 'already spawned' : (beatInfo.time <= t ? 'in the past' : 'unknown');
+                    console.log('[MARKER SPAWN] ⏭️ Beat skipped:', {
+                        beatKey: beatKey,
+                        beatTime: beatInfo.time.toFixed(3),
+                        currentTime: t.toFixed(3),
+                        reason: reason
+                    });
                 }
             }
         }
