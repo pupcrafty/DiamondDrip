@@ -1,16 +1,23 @@
 # Dockerfile for building DiamondDrip Lambda deployment package
-FROM python:3.11-slim
+# Note: Build context should be the project root (parent of aws/)
+# Example: docker build -f aws/Dockerfile -t lambda-builder .
+FROM python:3.12-slim
 
 # Set working directory
 WORKDIR /build
 
-# Copy Lambda function files
-COPY lambda_function.py .
-COPY database.py .
-COPY requirements.txt .
+# Copy Lambda function files from aws/
+COPY aws/lambda_function.py .
+COPY aws/database.py .
+COPY aws/requirements.txt .
 
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt -t .
+# Copy prediction engine files from synchronizer/
+COPY synchronizer/prediction_engine.py .
+COPY synchronizer/prediction_api.py .
+COPY synchronizer/slot_prior_model.py .
+
+# Install dependencies (requirements.txt was copied to /build root)
+RUN pip install --no-cache-dir -r /build/requirements.txt -t /build
 
 # Create zip package
 RUN apt-get update && apt-get install -y zip && \

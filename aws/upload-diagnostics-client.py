@@ -38,6 +38,7 @@ def upload_diagnostics_client(bucket_name, region='us-east-1', api_endpoint=None
         ('diagnostics/legacyDetectorTest.html', 'legacyDetectorTest.html'),
         ('diagnostics/microphoneInfo.html', 'microphoneInfo.html'),
         ('diagnostics/predictionCallDiagnostic.html', 'predictionCallDiagnostic.html'),
+        ('diagnostics/backend-diagnostic.html', 'backend-diagnostic.html'),
         ('diagnostics/simpleDetectorTest.html', 'simpleDetectorTest.html'),
         
         # Diagnostics JS files (to js/ directory)

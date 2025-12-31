@@ -59,6 +59,16 @@ def upload_player_client(bucket_name, region='us-east-1', api_endpoint=None):
         ('playerClient/js/marker.js', 'js/marker.js'),
         ('playerClient/js/target.js', 'js/target.js'),
         ('playerClient/js/beacon.js', 'js/beacon.js'),
+        ('playerClient/js/gameLoopOutline.js', 'js/gameLoopOutline.js'),
+        ('playerClient/js/gameHelpers.js', 'js/gameHelpers.js'),
+        ('playerClient/js/predictionApi.js', 'js/predictionApi.js'),
+        ('playerClient/js/gameState.js', 'js/gameState.js'),
+        ('playerClient/js/beatIntegration.js', 'js/beatIntegration.js'),
+        ('playerClient/js/predictionSelection.js', 'js/predictionSelection.js'),
+        ('playerClient/js/gameLoopLogic.js', 'js/gameLoopLogic.js'),
+        ('playerClient/js/gameRenderer.js', 'js/gameRenderer.js'),
+        ('playerClient/js/inputHandlers.js', 'js/inputHandlers.js'),
+        ('playerClient/js/beatPatternVisualizer.js', 'js/beatPatternVisualizer.js'),
         ('playerClient/diagnostic.html', 'diagnostic.html'),
         
         # Beat detector files
@@ -100,14 +110,15 @@ def upload_player_client(bucket_name, region='us-east-1', api_endpoint=None):
             with open(source_file, 'rb') as f:
                 content = f.read()
             
-            # If it's game.js and we have an API endpoint, update it
-            if s3_key == 'js/game.js' and api_endpoint:
+            # If it's game.js or predictionApi.js and we have an API endpoint, update it
+            if (s3_key == 'js/game.js' or s3_key == 'js/predictionApi.js') and api_endpoint:
                 content_str = content.decode('utf-8')
                 # Update PREDICTION_SERVER_URL
                 import re
+                # Update the PREDICTION_SERVER_URL constant
                 content_str = re.sub(
                     r"const PREDICTION_SERVER_URL = ['\"](https?://[^'\"]+)['\"]",
-                    f"const PREDICTION_SERVER_URL = '{api_endpoint}/prediction'",
+                    f"const PREDICTION_SERVER_URL = '{api_endpoint}/predict_phrase'",
                     content_str
                 )
                 content = content_str.encode('utf-8')

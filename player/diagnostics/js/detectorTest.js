@@ -11,8 +11,6 @@ let isRunning = false;
 let lastPulseTime = -999;
 let beatCount = 0;
 let maxRmsForScale = 0.1; // Initial scale reference
-let sustainedBeatSlots = new Map(); // Track which pattern slots correspond to sustained beats: Map<slot, duration32nd>
-let currentPhraseStart = null; // Track current phrase start time for slot calculation
 let diagnosticData = {
     rms: 0,
     avg: 0,
@@ -304,44 +302,6 @@ function addPulseLog(time, rms, threshold, avg) {
     }
 }
 
-// Helper function to calculate slot index from pulse time
-function calculateSlotFromPulseTime(pulseTime, bpm, phraseStart) {
-    if (bpm === null || bpm <= 0 || phraseStart === null) return null;
-    
-    const beatDuration = 60 / bpm;
-    const phraseDuration = beatDuration * PHRASE_BEATS;
-    const thirtySecondNoteDuration = beatDuration / 8;
-    
-    const timeInPhrase = pulseTime - phraseStart;
-    const slot = Math.round(timeInPhrase / thirtySecondNoteDuration);
-    
-    if (slot >= 0 && slot < PHRASE_BEATS * 8) {
-        return slot;
-    }
-    return null;
-}
-
-// Helper function to get all slots covered by a sustained beat
-function getSustainedBeatCoveredSlots(sustainedBeatSlots) {
-    const coveredSlots = new Set();
-    
-    // For each sustained beat, calculate which slots it covers
-    sustainedBeatSlots.forEach((duration32nd, startSlot) => {
-        // Calculate how many slots are covered (round up to include partial slots)
-        const slotsToCover = Math.ceil(duration32nd);
-        
-        // Mark all covered slots
-        for (let i = 0; i < slotsToCover; i++) {
-            const slot = startSlot + i;
-            if (slot >= 0 && slot < PHRASE_BEATS * 8) {
-                coveredSlots.add(slot);
-            }
-        }
-    });
-    
-    return coveredSlots;
-}
-
 function updateRhythmPatternDisplay() {
     const container = document.getElementById('rhythmPatternContainer');
     if (!container) return;
@@ -355,20 +315,14 @@ function updateRhythmPatternDisplay() {
     }
     
     const predictedPhrasePattern = RHYTHM_PREDICTOR.getPredictedPhrasePattern();
-    const predictedPhraseDurations = RHYTHM_PREDICTOR.getPredictedPhraseDurations();
     const predictedFromCorrectPatterns = RHYTHM_PREDICTOR.getPredictedFromCorrectPatterns();
-    const predictedFromCorrectDurations = RHYTHM_PREDICTOR.getPredictedFromCorrectDurations();
     const hyperPredictedPhrasePattern = RHYTHM_PREDICTOR.getHyperPredictedPhrasePattern();
-    const hyperPredictedDurations = RHYTHM_PREDICTOR.getHyperPredictedDurations();
     const phrasePatterns = RHYTHM_PREDICTOR.getPhrasePatterns();
     const correctPredictionPatterns = RHYTHM_PREDICTOR.getCorrectPredictionPatterns();
     const predictionAccuracy = RHYTHM_PREDICTOR.getPredictionAccuracy();
     
     let html = '<div style="margin-bottom: 15px;">';
     html += `<div style="color: #888; font-size: 14px; margin-bottom: 10px;">Current Phrase Pattern (${PHRASE_BEATS} beats, 32nd note resolution)</div>`;
-    
-    // Calculate which slots are covered by sustained beats
-    const sustainedCoveredSlots = getSustainedBeatCoveredSlots(sustainedBeatSlots);
     
     // Display current phrase as rhythm grid
     html += '<div style="display: flex; gap: 2px; align-items: center; flex-wrap: wrap; background-color: #0a0a12; padding: 10px; border-radius: 4px;">';
@@ -379,55 +333,26 @@ function updateRhythmPatternDisplay() {
             const index = beat * 8 + thirtySecond;
             const isActive = currentPhrasePattern[index];
             const isBeatStart = thirtySecond === 0;
-            const duration32nd = sustainedBeatSlots.get(index);
-            const isSustained = duration32nd !== undefined;
-            const isCoveredBySustained = sustainedCoveredSlots.has(index);
             
-            // Different colors for beat starts and sustained beats
+            // Different colors for beat starts
             let bgColor = isActive ? '#ffaa44' : '#222';
             if (isBeatStart) {
                 bgColor = isActive ? '#ff8844' : '#333';
-            }
-            if (isSustained && isActive) {
-                // Primary sustained beat slot (where pulse started)
-                bgColor = isBeatStart ? '#ffcc44' : '#ffff44';
-            } else if (isCoveredBySustained && !isActive) {
-                // Slot covered by sustained beat but no pulse here
-                bgColor = isBeatStart ? '#664422' : '#444422';
-            } else if (isCoveredBySustained && isActive) {
-                // Slot covered by sustained beat and has pulse
-                bgColor = isBeatStart ? '#ccaa44' : '#dddd44';
-            }
-            
-            let borderColor = isBeatStart ? '#555' : '#333';
-            let borderWidth = '1px';
-            let boxShadow = '';
-            if (isCoveredBySustained) {
-                borderColor = '#ffff00';
-                borderWidth = '2px';
-                boxShadow = '0 0 6px #ffff00';
-            }
-            
-            // Display duration for sustained beats
-            let displayText = isBeatStart ? (beat + 1) : '';
-            if (isSustained && isActive && duration32nd !== undefined) {
-                displayText = duration32nd.toFixed(1);
             }
             
             html += `<div style="
                 width: 18px;
                 height: 40px;
                 background-color: ${bgColor};
-                border: ${borderWidth} solid ${borderColor};
+                border: 1px solid ${isBeatStart ? '#555' : '#333'};
                 border-radius: 2px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                font-size: ${isSustained && isActive ? '8px' : '9px'};
-                color: ${isActive ? '#000' : '#666'};
+                font-size: 9px;
+                color: ${isActive ? '#fff' : '#666'};
                 position: relative;
-                ${boxShadow ? `box-shadow: ${boxShadow};` : ''}
-            " title="${isSustained && isActive ? `Sustained: ${duration32nd.toFixed(2)} 32nd beats` : isCoveredBySustained ? 'Covered by sustained beat' : ''}">${displayText}</div>`;
+            ">${isBeatStart ? (beat + 1) : ''}</div>`;
         }
     }
     
@@ -435,17 +360,6 @@ function updateRhythmPatternDisplay() {
     
     // Show HYPER PREDICTION (if available), otherwise show regular prediction
     if (hyperPredictedPhrasePattern !== null) {
-        // Calculate sustained beat coverage for hyper prediction
-        const hyperPredictionDurations = new Map();
-        if (hyperPredictedDurations) {
-            for (let i = 0; i < hyperPredictedDurations.length && i < hyperPredictedPhrasePattern.length; i++) {
-                if (hyperPredictedDurations[i] !== null && hyperPredictedDurations[i] !== undefined && hyperPredictedPhrasePattern[i]) {
-                    hyperPredictionDurations.set(i, hyperPredictedDurations[i]);
-                }
-            }
-        }
-        const hyperSustainedCoveredSlots = getSustainedBeatCoveredSlots(hyperPredictionDurations);
-        
         html += '<div style="margin-top: 20px; padding-top: 15px; border-top: 2px solid #00ff00;">';
         html += `<div style="color: #00ff00; font-size: 16px; font-weight: bold; margin-bottom: 10px;">🌟 HYPER PREDICTION (Combined)</div>`;
         html += '<div style="display: flex; gap: 2px; align-items: center; flex-wrap: wrap; background-color: #0a0a12; padding: 10px; border-radius: 4px; border: 2px solid #00ff00;">';
@@ -455,61 +369,31 @@ function updateRhythmPatternDisplay() {
                 const index = beat * 8 + thirtySecond;
                 const isActive = hyperPredictedPhrasePattern[index];
                 const isBeatStart = thirtySecond === 0;
-                const duration32nd = hyperPredictionDurations.get(index);
-                const isSustained = duration32nd !== undefined;
-                const isCoveredBySustained = hyperSustainedCoveredSlots.has(index);
                 
                 // Check if this beat is agreed upon by both predictions
                 const agreedUpon = (predictedPhrasePattern !== null && predictedPhrasePattern[index]) && 
                                  (predictedFromCorrectPatterns !== null && predictedFromCorrectPatterns[index]);
                 
-                // Different colors: cyan for hyper prediction sustained beats, green for regular
+                // Different colors: green/yellow for hyper prediction, brighter for agreed beats
                 let bgColor = isActive ? (agreedUpon ? '#00ff88' : '#00ff44') : '#222';
                 if (isBeatStart) {
                     bgColor = isActive ? (agreedUpon ? '#00cc66' : '#00cc44') : '#333';
-                }
-                if (isSustained && isActive) {
-                    // Primary sustained beat slot (cyan for hyper prediction)
-                    bgColor = isBeatStart ? '#00cccc' : '#44ffff';
-                } else if (isCoveredBySustained && !isActive) {
-                    // Slot covered by sustained beat but no pulse here
-                    bgColor = isBeatStart ? '#224466' : '#224444';
-                } else if (isCoveredBySustained && isActive) {
-                    // Slot covered by sustained beat and has pulse
-                    bgColor = isBeatStart ? '#00aaaa' : '#00dddd';
-                }
-                
-                let borderColor = isBeatStart ? '#555' : '#333';
-                let borderWidth = '1px';
-                let boxShadow = '';
-                if (isCoveredBySustained) {
-                    borderColor = '#00ffff';
-                    borderWidth = '2px';
-                    boxShadow = '0 0 6px #00ffff';
-                } else if (agreedUpon) {
-                    boxShadow = '0 0 4px #00ff88';
-                }
-                
-                // Display duration for sustained beats
-                let displayText = isBeatStart ? (beat + 1) : '';
-                if (isSustained && isActive && duration32nd !== undefined) {
-                    displayText = duration32nd.toFixed(1);
                 }
                 
                 html += `<div style="
                     width: 18px;
                     height: 40px;
                     background-color: ${bgColor};
-                    border: ${borderWidth} solid ${borderColor};
+                    border: 1px solid ${isBeatStart ? (agreedUpon ? '#00ff88' : '#555') : '#333'};
                     border-radius: 2px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    font-size: ${isSustained && isActive ? '8px' : '9px'};
+                    font-size: 9px;
                     color: ${isActive ? '#000' : '#666'};
                     position: relative;
-                    ${boxShadow ? `box-shadow: ${boxShadow};` : ''}
-                " title="${isSustained && isActive ? `Sustained: ${duration32nd.toFixed(2)} 32nd beats` : isCoveredBySustained ? 'Covered by sustained beat' : ''}">${displayText}</div>`;
+                    ${agreedUpon ? 'box-shadow: 0 0 4px #00ff88;' : ''}
+                ">${isBeatStart ? (beat + 1) : ''}</div>`;
             }
         }
         
@@ -526,17 +410,6 @@ function updateRhythmPatternDisplay() {
             
             // Prediction 1: From history phrases
             if (predictedPhrasePattern !== null) {
-                // Calculate sustained beat coverage for history prediction
-                const historyPredictionDurations = new Map();
-                if (predictedPhraseDurations) {
-                    for (let i = 0; i < predictedPhraseDurations.length && i < predictedPhrasePattern.length; i++) {
-                        if (predictedPhraseDurations[i] !== null && predictedPhraseDurations[i] !== undefined && predictedPhrasePattern[i]) {
-                            historyPredictionDurations.set(i, predictedPhraseDurations[i]);
-                        }
-                    }
-                }
-                const historySustainedCoveredSlots = getSustainedBeatCoveredSlots(historyPredictionDurations);
-                
                 html += '<div style="flex: 1; min-width: 200px;">';
                 html += `<div style="color: #aa44ff; font-size: 12px; margin-bottom: 5px;">From History Phrases</div>`;
                 html += '<div style="display: flex; gap: 2px; align-items: center; flex-wrap: wrap; background-color: #0a0a12; padding: 8px; border-radius: 4px; opacity: 0.7;">';
@@ -546,48 +419,21 @@ function updateRhythmPatternDisplay() {
                         const index = beat * 8 + thirtySecond;
                         const isActive = predictedPhrasePattern[index];
                         const isBeatStart = thirtySecond === 0;
-                        const duration32nd = historyPredictionDurations.get(index);
-                        const isSustained = duration32nd !== undefined;
-                        const isCoveredBySustained = historySustainedCoveredSlots.has(index);
                         
                         let bgColor = isActive ? '#aa44ff' : '#222';
                         if (isBeatStart) {
                             bgColor = isActive ? '#8844ff' : '#333';
-                        }
-                        if (isSustained && isActive) {
-                            // Primary sustained beat slot (blue for history prediction)
-                            bgColor = isBeatStart ? '#4488cc' : '#6699ff';
-                        } else if (isCoveredBySustained && !isActive) {
-                            bgColor = isBeatStart ? '#222266' : '#222244';
-                        } else if (isCoveredBySustained && isActive) {
-                            bgColor = isBeatStart ? '#4466aa' : '#5577bb';
-                        }
-                        
-                        let borderColor = isBeatStart ? '#555' : '#333';
-                        let borderWidth = '1px';
-                        let boxShadow = '';
-                        if (isCoveredBySustained) {
-                            borderColor = '#4488ff';
-                            borderWidth = '2px';
-                            boxShadow = '0 0 4px #4488ff';
-                        }
-                        
-                        // Display duration for sustained beats
-                        let displayText = isBeatStart ? (beat + 1) : '';
-                        if (isSustained && isActive && duration32nd !== undefined) {
-                            displayText = duration32nd.toFixed(1);
                         }
                         
                         html += `<div style="
                             width: 14px;
                             height: 30px;
                             background-color: ${bgColor};
-                            border: ${borderWidth} solid ${borderColor};
+                            border: 1px solid ${isBeatStart ? '#555' : '#333'};
                             border-radius: 2px;
-                            font-size: ${isSustained && isActive ? '6px' : '7px'};
+                            font-size: 7px;
                             color: ${isActive ? '#fff' : '#666'};
-                            ${boxShadow ? `box-shadow: ${boxShadow};` : ''}
-                        " title="${isSustained && isActive ? `Sustained: ${duration32nd.toFixed(2)} 32nd beats` : isCoveredBySustained ? 'Covered by sustained beat' : ''}">${displayText}</div>`;
+                        ">${isBeatStart ? (beat + 1) : ''}</div>`;
                     }
                 }
                 
@@ -597,17 +443,6 @@ function updateRhythmPatternDisplay() {
             
             // Prediction 2: From correct patterns
             if (predictedFromCorrectPatterns !== null) {
-                // Calculate sustained beat coverage for correct patterns prediction
-                const correctPredictionDurations = new Map();
-                if (predictedFromCorrectDurations) {
-                    for (let i = 0; i < predictedFromCorrectDurations.length && i < predictedFromCorrectPatterns.length; i++) {
-                        if (predictedFromCorrectDurations[i] !== null && predictedFromCorrectDurations[i] !== undefined && predictedFromCorrectPatterns[i]) {
-                            correctPredictionDurations.set(i, predictedFromCorrectDurations[i]);
-                        }
-                    }
-                }
-                const correctSustainedCoveredSlots = getSustainedBeatCoveredSlots(correctPredictionDurations);
-                
                 html += '<div style="flex: 1; min-width: 200px;">';
                 html += `<div style="color: #44aaff; font-size: 12px; margin-bottom: 5px;">From Correct Patterns</div>`;
                 html += '<div style="display: flex; gap: 2px; align-items: center; flex-wrap: wrap; background-color: #0a0a12; padding: 8px; border-radius: 4px; opacity: 0.7;">';
@@ -617,48 +452,21 @@ function updateRhythmPatternDisplay() {
                         const index = beat * 8 + thirtySecond;
                         const isActive = predictedFromCorrectPatterns[index];
                         const isBeatStart = thirtySecond === 0;
-                        const duration32nd = correctPredictionDurations.get(index);
-                        const isSustained = duration32nd !== undefined;
-                        const isCoveredBySustained = correctSustainedCoveredSlots.has(index);
                         
                         let bgColor = isActive ? '#44aaff' : '#222';
                         if (isBeatStart) {
                             bgColor = isActive ? '#4488ff' : '#333';
-                        }
-                        if (isSustained && isActive) {
-                            // Primary sustained beat slot (orange for correct patterns prediction)
-                            bgColor = isBeatStart ? '#ff8844' : '#ffaa66';
-                        } else if (isCoveredBySustained && !isActive) {
-                            bgColor = isBeatStart ? '#662222' : '#442222';
-                        } else if (isCoveredBySustained && isActive) {
-                            bgColor = isBeatStart ? '#cc6644' : '#dd7755';
-                        }
-                        
-                        let borderColor = isBeatStart ? '#555' : '#333';
-                        let borderWidth = '1px';
-                        let boxShadow = '';
-                        if (isCoveredBySustained) {
-                            borderColor = '#ff8844';
-                            borderWidth = '2px';
-                            boxShadow = '0 0 4px #ff8844';
-                        }
-                        
-                        // Display duration for sustained beats
-                        let displayText = isBeatStart ? (beat + 1) : '';
-                        if (isSustained && isActive && duration32nd !== undefined) {
-                            displayText = duration32nd.toFixed(1);
                         }
                         
                         html += `<div style="
                             width: 14px;
                             height: 30px;
                             background-color: ${bgColor};
-                            border: ${borderWidth} solid ${borderColor};
+                            border: 1px solid ${isBeatStart ? '#555' : '#333'};
                             border-radius: 2px;
-                            font-size: ${isSustained && isActive ? '6px' : '7px'};
+                            font-size: 7px;
                             color: ${isActive ? '#fff' : '#666'};
-                            ${boxShadow ? `box-shadow: ${boxShadow};` : ''}
-                        " title="${isSustained && isActive ? `Sustained: ${duration32nd.toFixed(2)} 32nd beats` : isCoveredBySustained ? 'Covered by sustained beat' : ''}">${displayText}</div>`;
+                        ">${isBeatStart ? (beat + 1) : ''}</div>`;
                     }
                 }
                 
@@ -671,17 +479,6 @@ function updateRhythmPatternDisplay() {
         }
     } else if (predictedPhrasePattern !== null) {
         // Fallback to regular prediction if hyper prediction not available
-        // Calculate sustained beat coverage for history prediction
-        const historyPredictionDurations = new Map();
-        if (predictedPhraseDurations) {
-            for (let i = 0; i < predictedPhraseDurations.length && i < predictedPhrasePattern.length; i++) {
-                if (predictedPhraseDurations[i] !== null && predictedPhraseDurations[i] !== undefined && predictedPhrasePattern[i]) {
-                    historyPredictionDurations.set(i, predictedPhraseDurations[i]);
-                }
-            }
-        }
-        const historySustainedCoveredSlots = getSustainedBeatCoveredSlots(historyPredictionDurations);
-        
         html += '<div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #333;">';
         html += `<div style="color: #888; font-size: 14px; margin-bottom: 10px;">Predicted Next Phrase</div>`;
         html += '<div style="display: flex; gap: 2px; align-items: center; flex-wrap: wrap; background-color: #0a0a12; padding: 10px; border-radius: 4px; opacity: 0.7;">';
@@ -691,52 +488,25 @@ function updateRhythmPatternDisplay() {
                 const index = beat * 8 + thirtySecond;
                 const isActive = predictedPhrasePattern[index];
                 const isBeatStart = thirtySecond === 0;
-                const duration32nd = historyPredictionDurations.get(index);
-                const isSustained = duration32nd !== undefined;
-                const isCoveredBySustained = historySustainedCoveredSlots.has(index);
                 
                 let bgColor = isActive ? '#aa44ff' : '#222';
                 if (isBeatStart) {
                     bgColor = isActive ? '#8844ff' : '#333';
-                }
-                if (isSustained && isActive) {
-                    // Primary sustained beat slot (blue for history prediction)
-                    bgColor = isBeatStart ? '#4488cc' : '#6699ff';
-                } else if (isCoveredBySustained && !isActive) {
-                    bgColor = isBeatStart ? '#222266' : '#222244';
-                } else if (isCoveredBySustained && isActive) {
-                    bgColor = isBeatStart ? '#4466aa' : '#5577bb';
-                }
-                
-                let borderColor = isBeatStart ? '#555' : '#333';
-                let borderWidth = '1px';
-                let boxShadow = '';
-                if (isCoveredBySustained) {
-                    borderColor = '#4488ff';
-                    borderWidth = '2px';
-                    boxShadow = '0 0 6px #4488ff';
-                }
-                
-                // Display duration for sustained beats
-                let displayText = isBeatStart ? (beat + 1) : '';
-                if (isSustained && isActive && duration32nd !== undefined) {
-                    displayText = duration32nd.toFixed(1);
                 }
                 
                 html += `<div style="
                     width: 18px;
                     height: 40px;
                     background-color: ${bgColor};
-                    border: ${borderWidth} solid ${borderColor};
+                    border: 1px solid ${isBeatStart ? '#555' : '#333'};
                     border-radius: 2px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    font-size: ${isSustained && isActive ? '8px' : '9px'};
+                    font-size: 9px;
                     color: ${isActive ? '#fff' : '#666'};
                     position: relative;
-                    ${boxShadow ? `box-shadow: ${boxShadow};` : ''}
-                " title="${isSustained && isActive ? `Sustained: ${duration32nd.toFixed(2)} 32nd beats` : isCoveredBySustained ? 'Covered by sustained beat' : ''}">${displayText}</div>`;
+                ">${isBeatStart ? (beat + 1) : ''}</div>`;
             }
         }
         
@@ -865,9 +635,6 @@ async function startDetection() {
         BPM_ESTIMATOR.reset();
         ENERGY_CLASSIFIER.reset();
         RHYTHM_PREDICTOR.reset();
-        SUSTAINED_BEAT_DETECTOR.reset();
-        sustainedBeatSlots = new Map();
-        currentPhraseStart = null;
         
         // Reset local state
         beatCount = 0;
@@ -908,8 +675,6 @@ async function startDetection() {
                 // Update BPM estimator
                 BPM_ESTIMATOR.update();
                 
-                const hyperBpm = BPM_ESTIMATOR.getHyperSmoothedBPM();
-                
                 // Detect pulses based on pulse threshold
                 const pulseThreshold = ENERGY_CLASSIFIER.getPulseThreshold();
                 if (pulseThreshold !== null && pulseThreshold > 0 && 
@@ -917,44 +682,10 @@ async function startDetection() {
                     data.time - lastPulseTime >= PULSE_GATE_TIME) {
                     lastPulseTime = data.time;
                     
-                    // Process pulse for rhythm prediction first (to get phrase timing)
+                    // Process pulse for rhythm prediction
+                    const hyperBpm = BPM_ESTIMATOR.getHyperSmoothedBPM();
                     RHYTHM_PREDICTOR.processPulse(data.time, hyperBpm);
-                    
-                    // Process pulse for sustained beat detection
-                    SUSTAINED_BEAT_DETECTOR.processPulse(data.time, data.avg);
-                    
                     addPulseLog(data.time, data.rms, pulseThreshold, data.avg);
-                    
-                    // Track phrase start - estimate by checking if this pulse would start a new phrase
-                    if (currentPhraseStart === null) {
-                        currentPhraseStart = data.time;
-                    } else if (hyperBpm !== null && hyperBpm > 0) {
-                        const beatDuration = 60 / hyperBpm;
-                        const phraseDuration = beatDuration * PHRASE_BEATS;
-                        const timeSincePhraseStart = data.time - currentPhraseStart;
-                        // If pulse is past phrase duration, it started a new phrase
-                        if (timeSincePhraseStart >= phraseDuration) {
-                            currentPhraseStart = data.time;
-                            // Clear sustained beat slots when phrase resets
-                            sustainedBeatSlots.clear();
-                        }
-                    }
-                }
-                
-                // Process diagnostic data for sustained beat detection
-                if (currentPhraseStart !== null) {
-                    const sustainedBeat = SUSTAINED_BEAT_DETECTOR.processDiagnostic(data.time, data.avg, hyperBpm);
-                    if (sustainedBeat !== null && sustainedBeat.duration32nd !== null) {
-                        // Calculate which slot this sustained beat corresponds to
-                        const slot = calculateSlotFromPulseTime(sustainedBeat.pulseTime, hyperBpm, currentPhraseStart);
-                        if (slot !== null && slot >= 0 && slot < PHRASE_BEATS * 8) {
-                            // Update duration (may be updated multiple times as tracking continues)
-                            sustainedBeatSlots.set(slot, sustainedBeat.duration32nd);
-                            
-                            // Also update rhythm predictor with sustained beat information
-                            RHYTHM_PREDICTOR.processSustainedBeat(sustainedBeat.pulseTime, sustainedBeat.duration32nd, hyperBpm);
-                        }
-                    }
                 }
             }
         );
@@ -987,9 +718,6 @@ function stopDetection() {
     BPM_ESTIMATOR.reset();
     ENERGY_CLASSIFIER.reset();
     RHYTHM_PREDICTOR.reset();
-    SUSTAINED_BEAT_DETECTOR.reset();
-    sustainedBeatSlots = new Map();
-    currentPhraseStart = null;
     
     // Reset local state
     beatCount = 0;

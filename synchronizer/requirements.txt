@@ -4,6 +4,10 @@
 # Optional: For SSL certificate generation (if cryptography is not available, falls back to openssl)
 # cryptography
 
+# Prediction Engine Requirements
+numpy>=1.20.0
+
+
 
 
 

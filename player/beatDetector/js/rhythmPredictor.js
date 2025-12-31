@@ -13,20 +13,14 @@ const RHYTHM_PREDICTOR = (function() {
 
     // State
     let currentPhraseStart = null; // Start time of current phrase
-    let currentPhrasePattern = null; // Current phrase pattern (32nd note slots) - boolean array
-    let currentPhraseDurations = null; // Current phrase sustained beat durations (32nd note beats) - number array (null for non-sustained)
+    let currentPhrasePattern = null; // Current phrase pattern (32nd note slots)
     let predictedPhrasePattern = null; // Predicted next phrase pattern (from history phrases)
-    let predictedPhraseDurations = null; // Predicted durations for next phrase
     let predictedFromCorrectPatterns = null; // Predicted next phrase pattern (from correct patterns)
-    let predictedFromCorrectDurations = null; // Predicted durations from correct patterns
     let hyperPredictedPhrasePattern = null; // Hyper prediction combining both predictions
-    let hyperPredictedDurations = null; // Hyper predicted durations
-    let phrasePatterns = []; // Array of phrase patterns (last N phrases) - boolean arrays
-    let phraseDurations = []; // Array of phrase durations (last N phrases) - number arrays
+    let phrasePatterns = []; // Array of phrase patterns (last N phrases)
     let phraseCount = 0; // Total phrase count for pattern adjustment
     let predictionAccuracy = []; // Array of accuracy records for past phrases {correct: number, total: number, accuracy: number}
     let correctPredictionPatterns = []; // Store patterns that were correctly predicted for future use
-    let correctPredictionDurations = []; // Store durations that were correctly predicted
     let hasLoggedFirstPhrase = false; // Track if we've logged first phrase completion
     let hasLoggedEnoughPhrases = false; // Track if we've logged when we have enough phrases for prediction
     let hasLoggedInitialPrediction = false; // Track if we've logged first prediction from history phrases
@@ -204,25 +198,7 @@ const RHYTHM_PREDICTOR = (function() {
         return similarity >= threshold;
     }
 
-    function arePatternsSimilarForDurations(pattern1, pattern2, threshold) {
-        // For durations, compare numeric values (treating null as 0)
-        if (pattern1.length !== pattern2.length) return false;
-        
-        let matches = 0;
-        for (let i = 0; i < pattern1.length; i++) {
-            const val1 = pattern1[i] !== null && pattern1[i] !== undefined ? pattern1[i] : 0;
-            const val2 = pattern2[i] !== null && pattern2[i] !== undefined ? pattern2[i] : 0;
-            // Consider similar if both are null/0 or both have similar values (within 20% difference)
-            if (val1 === val2 || (val1 > 0 && val2 > 0 && Math.abs(val1 - val2) / Math.max(val1, val2) < 0.2)) {
-                matches++;
-            }
-        }
-        
-        const similarity = matches / pattern1.length;
-        return similarity >= threshold;
-    }
-
-    function findRepeatingPattern(phrases, forDurations = false) {
+    function findRepeatingPattern(phrases) {
         // Look for repeating sequences of 2, 3, or 4 phrases
         for (let patternLength = 2; patternLength <= 4; patternLength++) {
             if (phrases.length < patternLength * 2) continue; // Need at least 2 repetitions
@@ -231,13 +207,10 @@ const RHYTHM_PREDICTOR = (function() {
             const lastPattern = phrases.slice(-patternLength);
             const previousPattern = phrases.slice(-patternLength * 2, -patternLength);
             
-            // Compare patterns (use different similarity function for durations)
+            // Compare patterns
             let matches = true;
             for (let i = 0; i < patternLength; i++) {
-                const areSimilar = forDurations 
-                    ? arePatternsSimilarForDurations(lastPattern[i], previousPattern[i], 0.8)
-                    : arePatternsSimilar(lastPattern[i], previousPattern[i], 0.8);
-                if (!areSimilar) {
+                if (!arePatternsSimilar(lastPattern[i], previousPattern[i], 0.8)) {
                     matches = false;
                     break;
                 }
@@ -255,29 +228,24 @@ const RHYTHM_PREDICTOR = (function() {
         return null;
     }
 
-    function predictFromHistoryPhrases(historyPhrases, historyDurations) {
+    function predictFromHistoryPhrases(historyPhrases) {
         // Try to find repeating patterns first
         const repeatingPattern = findRepeatingPattern(historyPhrases);
-        const repeatingDurations = historyDurations && historyDurations.length > 0 ? 
-            findRepeatingPattern(historyDurations, true) : null; // true = for durations
         
         if (repeatingPattern !== null) {
             // Found a repeating pattern, use it to predict
             const prediction = [...repeatingPattern];
-            const predictionDurations = repeatingDurations ? [...repeatingDurations] : new Array(PHRASE_BEATS * 8).fill(null);
             // Apply 8th beat preference to repeating patterns
             applyEighthBeatPreference(prediction);
-            return { pattern: prediction, durations: predictionDurations };
+            return prediction;
         }
         
         // If no clear repeating pattern, use statistical prediction
         // For each 32nd note slot, predict based on how often it's been active in similar positions
         const prediction = new Array(PHRASE_BEATS * 8).fill(false);
-        const predictionDurations = new Array(PHRASE_BEATS * 8).fill(null);
         
         // Use only history phrases for this prediction
-        const recentPhrases = historyPhrases.slice(-2); // Use last 2 phrases (reduced from 4 for faster startup)
-        const recentDurations = historyDurations ? historyDurations.slice(-2) : [];
+        const recentPhrases = historyPhrases.slice(-4); // Use last 4 phrases
         
         // First pass: favor 8th beats (every 4 slots: 0, 4, 8, 12, 16, 20, 24, 28)
         for (let slot = 0; slot < prediction.length; slot++) {
@@ -285,29 +253,19 @@ const RHYTHM_PREDICTOR = (function() {
             
             // Count how many times this slot was active in recent phrases
             let activeCount = 0;
-            const durations = [];
-            for (let i = 0; i < recentPhrases.length; i++) {
-                if (recentPhrases[i][slot]) {
+            for (const phrase of recentPhrases) {
+                if (phrase[slot]) {
                     activeCount++;
-                    // Collect durations for this slot
-                    if (recentDurations[i] && recentDurations[i][slot] !== null && recentDurations[i][slot] !== undefined) {
-                        durations.push(recentDurations[i][slot]);
-                    }
                 }
             }
             
             // If slot was active in majority of recent phrases, predict it will be active
-            // Use threshold of 50% (at least 1 out of 2 for faster startup)
+            // Use threshold of 50% (at least 2 out of 4)
             // But favor 8th beats with lower threshold
-            const threshold = isEighthBeat ? Math.max(1, Math.ceil(recentPhrases.length * 0.4)) : Math.max(1, Math.ceil(recentPhrases.length / 2));
+            const threshold = isEighthBeat ? Math.ceil(recentPhrases.length * 0.4) : Math.ceil(recentPhrases.length / 2);
             
             if (activeCount >= threshold) {
                 prediction[slot] = true;
-                // Predict duration as average of historical durations (if any)
-                if (durations.length > 0) {
-                    const avgDuration = durations.reduce((sum, d) => sum + d, 0) / durations.length;
-                    predictionDurations[slot] = avgDuration;
-                }
             }
         }
         
@@ -316,19 +274,14 @@ const RHYTHM_PREDICTOR = (function() {
         
         // Also check for patterns based on phrase position in a cycle
         // Look for 4-phrase cycles (only use historyPhrases for cycle detection)
-        // Reduced from 8 to 4 phrases needed for cycle detection (faster startup)
-        if (historyPhrases.length >= 4) {
+        if (historyPhrases.length >= 8) {
             const cycleLength = 4;
             const currentCyclePosition = (historyPhrases.length) % cycleLength;
             
             // Find phrases at the same position in previous cycles
             const similarPhrases = [];
-            const similarDurations = [];
             for (let i = currentCyclePosition; i < historyPhrases.length; i += cycleLength) {
                 similarPhrases.push(historyPhrases[i]);
-                if (historyDurations && historyDurations[i]) {
-                    similarDurations.push(historyDurations[i]);
-                }
             }
             
             // If we have at least 2 phrases at this position, use them for prediction
@@ -336,26 +289,16 @@ const RHYTHM_PREDICTOR = (function() {
                 for (let slot = 0; slot < prediction.length; slot++) {
                     const isEighthBeat = (slot % 4) === 0;
                     let activeCount = 0;
-                    const durations = [];
-                    for (let i = 0; i < similarPhrases.length; i++) {
-                        if (similarPhrases[i][slot]) {
+                    for (const phrase of similarPhrases) {
+                        if (phrase[slot]) {
                             activeCount++;
-                            // Collect durations
-                            if (similarDurations[i] && similarDurations[i][slot] !== null && similarDurations[i][slot] !== undefined) {
-                                durations.push(similarDurations[i][slot]);
-                            }
                         }
                     }
-            // Favor 8th beats with lower threshold
-            const threshold = isEighthBeat ? Math.max(1, Math.ceil(similarPhrases.length * 0.4)) : Math.max(1, Math.ceil(similarPhrases.length / 2));
+                    // Favor 8th beats with lower threshold
+                    const threshold = isEighthBeat ? Math.ceil(similarPhrases.length * 0.4) : Math.ceil(similarPhrases.length / 2);
                     // If majority of similar-position phrases have this slot active, predict it
                     if (activeCount >= threshold) {
                         prediction[slot] = true;
-                        // Predict duration as average if we have duration data
-                        if (durations.length > 0 && !predictionDurations[slot]) {
-                            const avgDuration = durations.reduce((sum, d) => sum + d, 0) / durations.length;
-                            predictionDurations[slot] = avgDuration;
-                        }
                     }
                 }
                 
@@ -364,7 +307,7 @@ const RHYTHM_PREDICTOR = (function() {
             }
         }
         
-        return { pattern: prediction, durations: predictionDurations };
+        return prediction;
     }
 
     function predictFromCorrectPatterns() {
@@ -374,11 +317,9 @@ const RHYTHM_PREDICTOR = (function() {
         
         // Create prediction based on correct prediction patterns
         const prediction = new Array(PHRASE_BEATS * 8).fill(false);
-        const predictionDurations = new Array(PHRASE_BEATS * 8).fill(null);
         
-        // Use last 2-4 correct patterns for prediction (reduced from 4-8 for faster startup)
-        const recentCorrectPatterns = correctPredictionPatterns.slice(-Math.min(4, correctPredictionPatterns.length));
-        const recentCorrectDurations = correctPredictionDurations.slice(-Math.min(4, correctPredictionDurations.length));
+        // Use last 4-8 correct patterns for prediction
+        const recentCorrectPatterns = correctPredictionPatterns.slice(-Math.min(8, correctPredictionPatterns.length));
         
         // Statistical prediction from correct patterns
         for (let slot = 0; slot < prediction.length; slot++) {
@@ -386,60 +327,35 @@ const RHYTHM_PREDICTOR = (function() {
             
             // Count how many times this slot was active in recent correct patterns
             let activeCount = 0;
-            const durations = [];
-            for (let i = 0; i < recentCorrectPatterns.length; i++) {
-                if (recentCorrectPatterns[i][slot]) {
+            for (const pattern of recentCorrectPatterns) {
+                if (pattern[slot]) {
                     activeCount++;
-                    // Collect durations
-                    if (recentCorrectDurations[i] && recentCorrectDurations[i][slot] !== null && recentCorrectDurations[i][slot] !== undefined) {
-                        durations.push(recentCorrectDurations[i][slot]);
-                    }
                 }
             }
             
             // If slot was active in majority of recent correct patterns, predict it will be active
             // Favor 8th beats with lower threshold
-            const threshold = isEighthBeat ? Math.max(1, Math.ceil(recentCorrectPatterns.length * 0.4)) : Math.max(1, Math.ceil(recentCorrectPatterns.length / 2));
+            const threshold = isEighthBeat ? Math.ceil(recentCorrectPatterns.length * 0.4) : Math.ceil(recentCorrectPatterns.length / 2);
             
             if (activeCount >= threshold) {
                 prediction[slot] = true;
-                // Predict duration as average if we have duration data
-                if (durations.length > 0) {
-                    const avgDuration = durations.reduce((sum, d) => sum + d, 0) / durations.length;
-                    predictionDurations[slot] = avgDuration;
-                }
             }
         }
         
         // Apply 8th beat preference
         applyEighthBeatPreference(prediction);
         
-        return { pattern: prediction, durations: predictionDurations };
+        return prediction;
     }
 
     function createHyperPrediction(pred1, pred2) {
         // Hyper prediction: only include agreed-upon beats and any predictions ON the beat (8th beats)
         const hyperPred = new Array(PHRASE_BEATS * 8).fill(false);
-        const hyperDurations = new Array(PHRASE_BEATS * 8).fill(null);
-        
-        // Extract patterns and durations
-        const pred1Pattern = pred1.pattern || pred1;
-        const pred1Durations = pred1.durations || null;
-        const pred2Pattern = pred2.pattern || pred2;
-        const pred2Durations = pred2.durations || null;
         
         // Step 1: Include all beats that both predictions agree on (high confidence)
         for (let slot = 0; slot < hyperPred.length; slot++) {
-            if (pred1Pattern[slot] && pred2Pattern[slot]) {
+            if (pred1[slot] && pred2[slot]) {
                 hyperPred[slot] = true;
-                // Use average duration if both have durations, or use whichever is available
-                if (pred1Durations && pred1Durations[slot] !== null && pred2Durations && pred2Durations[slot] !== null) {
-                    hyperDurations[slot] = (pred1Durations[slot] + pred2Durations[slot]) / 2;
-                } else if (pred1Durations && pred1Durations[slot] !== null) {
-                    hyperDurations[slot] = pred1Durations[slot];
-                } else if (pred2Durations && pred2Durations[slot] !== null) {
-                    hyperDurations[slot] = pred2Durations[slot];
-                }
             }
         }
         
@@ -449,47 +365,30 @@ const RHYTHM_PREDICTOR = (function() {
                 const isEighthBeat = (slot % 4) === 0;
                 
                 // Only include if it's on an 8th beat AND at least one prediction has it
-                if (isEighthBeat && (pred1Pattern[slot] || pred2Pattern[slot])) {
+                if (isEighthBeat && (pred1[slot] || pred2[slot])) {
                     hyperPred[slot] = true;
-                    // Use duration from whichever prediction has it
-                    if (pred1Pattern[slot] && pred1Durations && pred1Durations[slot] !== null) {
-                        hyperDurations[slot] = pred1Durations[slot];
-                    } else if (pred2Pattern[slot] && pred2Durations && pred2Durations[slot] !== null) {
-                        hyperDurations[slot] = pred2Durations[slot];
-                    }
                 }
             }
         }
         
-        return { pattern: hyperPred, durations: hyperDurations };
+        return hyperPred;
     }
 
     function predictNextPhrase() {
-        if (phrasePatterns.length < 2 && correctPredictionPatterns.length === 0) {
-            // Need at least 2 phrases or some correct patterns to make a prediction (reduced from 4 for faster startup)
+        if (phrasePatterns.length < 4 && correctPredictionPatterns.length === 0) {
+            // Need at least 4 phrases or some correct patterns to make a prediction
             predictedPhrasePattern = null;
-            predictedPhraseDurations = null;
             predictedFromCorrectPatterns = null;
-            predictedFromCorrectDurations = null;
             hyperPredictedPhrasePattern = null;
-            hyperPredictedDurations = null;
             return;
         }
         
         // Use last 16 phrases (or all available if less than 16)
         const historyPhrases = phrasePatterns.slice(-Math.min(16, phrasePatterns.length));
-        const historyDurations = phraseDurations.slice(-Math.min(16, phraseDurations.length));
         
         // PREDICTION 1: From history phrases
         const prevPredictedFromHistory = predictedPhrasePattern;
-        const result1 = predictFromHistoryPhrases(historyPhrases, historyDurations);
-        if (result1) {
-            predictedPhrasePattern = result1.pattern;
-            predictedPhraseDurations = result1.durations;
-        } else {
-            predictedPhrasePattern = null;
-            predictedPhraseDurations = null;
-        }
+        predictedPhrasePattern = predictFromHistoryPhrases(historyPhrases);
         
         // Log first prediction from history phrases
         if (!hasLoggedInitialPrediction && predictedPhrasePattern !== null && prevPredictedFromHistory === null) {
@@ -499,14 +398,7 @@ const RHYTHM_PREDICTOR = (function() {
         
         // PREDICTION 2: From correct prediction patterns
         const prevPredictedFromCorrect = predictedFromCorrectPatterns;
-        const result2 = predictFromCorrectPatterns();
-        if (result2) {
-            predictedFromCorrectPatterns = result2.pattern;
-            predictedFromCorrectDurations = result2.durations;
-        } else {
-            predictedFromCorrectPatterns = null;
-            predictedFromCorrectDurations = null;
-        }
+        predictedFromCorrectPatterns = predictFromCorrectPatterns();
         
         // Log first prediction from correct patterns
         if (!hasLoggedCorrectPatternPrediction && predictedFromCorrectPatterns !== null && prevPredictedFromCorrect === null) {
@@ -517,40 +409,19 @@ const RHYTHM_PREDICTOR = (function() {
         // HYPER PREDICTION: Combine both predictions
         const prevHyperPrediction = hyperPredictedPhrasePattern;
         if (predictedPhrasePattern !== null && predictedFromCorrectPatterns !== null) {
-            const hyperResult = createHyperPrediction(
-                { pattern: predictedPhrasePattern, durations: predictedPhraseDurations },
-                { pattern: predictedFromCorrectPatterns, durations: predictedFromCorrectDurations }
-            );
-            hyperPredictedPhrasePattern = hyperResult.pattern;
-            hyperPredictedDurations = hyperResult.durations;
+            hyperPredictedPhrasePattern = createHyperPrediction(predictedPhrasePattern, predictedFromCorrectPatterns);
         } else if (predictedPhrasePattern !== null) {
             hyperPredictedPhrasePattern = [...predictedPhrasePattern];
-            hyperPredictedDurations = predictedPhraseDurations ? [...predictedPhraseDurations] : null;
         } else if (predictedFromCorrectPatterns !== null) {
             hyperPredictedPhrasePattern = [...predictedFromCorrectPatterns];
-            hyperPredictedDurations = predictedFromCorrectDurations ? [...predictedFromCorrectDurations] : null;
         } else {
             hyperPredictedPhrasePattern = null;
-            hyperPredictedDurations = null;
         }
         
         // Log first hyper prediction
         if (!hasLoggedHyperPrediction && hyperPredictedPhrasePattern !== null && prevHyperPrediction === null) {
             log('PREDICTION_HYPER', '🌟 [HYPER PREDICTION] First hyper prediction generated (combined from both sources)');
             hasLoggedHyperPrediction = true;
-        }
-        
-        // Log predicted sustained beats
-        if (hyperPredictedDurations !== null && hyperPredictedPhrasePattern !== null) {
-            const sustainedSlots = [];
-            for (let slot = 0; slot < hyperPredictedDurations.length; slot++) {
-                if (hyperPredictedPhrasePattern[slot] && hyperPredictedDurations[slot] !== null && hyperPredictedDurations[slot] !== undefined) {
-                    sustainedSlots.push(`slot ${slot}: ${hyperPredictedDurations[slot].toFixed(2)} 32nd`);
-                }
-            }
-            if (sustainedSlots.length > 0) {
-                log('SUSTAINED_PREDICTION', `🎯 [SUSTAINED BEAT PREDICTION] Predicted sustained beats: ${sustainedSlots.join(', ')}`);
-            }
         }
     }
 
@@ -570,7 +441,6 @@ const RHYTHM_PREDICTOR = (function() {
             if (currentPhraseStart === null) {
                 currentPhraseStart = pulseTime;
                 currentPhrasePattern = new Array(PHRASE_BEATS * 8).fill(false); // 32 thirty-second notes per phrase
-                currentPhraseDurations = new Array(PHRASE_BEATS * 8).fill(null); // Duration in 32nd beats, null for non-sustained
             }
             
             // Check if we've moved to a new phrase
@@ -592,23 +462,13 @@ const RHYTHM_PREDICTOR = (function() {
                         if (correctParts !== null && correctParts.some(slot => slot)) {
                             // Only store if there are some correct parts
                             correctPredictionPatterns.push(correctParts);
-                            // Extract corresponding durations for correct parts
-                            const correctDurations = new Array(currentPhraseDurations.length).fill(null);
-                            for (let i = 0; i < correctParts.length; i++) {
-                                if (correctParts[i] && currentPhraseDurations[i] !== null && currentPhraseDurations[i] !== undefined) {
-                                    correctDurations[i] = currentPhraseDurations[i];
-                                }
-                            }
-                            correctPredictionDurations.push(correctDurations);
                             if (correctPredictionPatterns.length > MAX_CORRECT_PATTERNS) {
                                 correctPredictionPatterns.shift();
-                                correctPredictionDurations.shift();
                             }
                         }
                     }
                     
                     phrasePatterns.push([...currentPhrasePattern]);
-                    phraseDurations.push([...currentPhraseDurations]);
                     phraseCount++;
                     
                     // Log first phrase completion
@@ -618,21 +478,19 @@ const RHYTHM_PREDICTOR = (function() {
                     }
                     
                     // Log when we have enough phrases for prediction
-                    if (!hasLoggedEnoughPhrases && phrasePatterns.length >= 2) {
-                        log('PULSE_PATTERN', '🎵 [PULSE PATTERN LISTENING] Enough phrases collected for prediction (2 phrases)');
+                    if (!hasLoggedEnoughPhrases && phrasePatterns.length >= 4) {
+                        log('PULSE_PATTERN', '🎵 [PULSE PATTERN LISTENING] Enough phrases collected for prediction (4 phrases)');
                         hasLoggedEnoughPhrases = true;
                     }
                     
                     if (phrasePatterns.length > MAX_PHRASES) {
                         phrasePatterns.shift();
-                        phraseDurations.shift();
                     }
                 }
                 
                 // Start new phrase
                 currentPhraseStart = pulseTime;
                 currentPhrasePattern = new Array(PHRASE_BEATS * 8).fill(false);
-                currentPhraseDurations = new Array(PHRASE_BEATS * 8).fill(null);
             }
             
             // Quantize pulse to nearest 32nd note slot
@@ -642,55 +500,15 @@ const RHYTHM_PREDICTOR = (function() {
             // Clamp to phrase bounds (0 to 31 for 4 beats * 8 thirty-second notes)
             if (thirtySecondNoteIndex >= 0 && thirtySecondNoteIndex < currentPhrasePattern.length) {
                 currentPhrasePattern[thirtySecondNoteIndex] = true;
-                // Duration will be set by processSustainedBeat if this pulse becomes sustained
             }
             
             // Predict next phrase based on past patterns
             predictNextPhrase();
         },
 
-        /**
-         * Process a sustained beat detection
-         * @param {number} pulseTime - Time when pulse was detected
-         * @param {number} duration32nd - Duration of sustained beat in 32nd note beats
-         * @param {number} hyperSmoothedBPM - Current BPM for phrase calculation
-         */
-        processSustainedBeat: function(pulseTime, duration32nd, hyperSmoothedBPM) {
-            if (hyperSmoothedBPM === null || hyperSmoothedBPM <= 0 || currentPhraseStart === null) {
-                return; // Need BPM and phrase start
-            }
-            
-            const beatDuration = 60 / hyperSmoothedBPM;
-            const phraseDuration = beatDuration * PHRASE_BEATS;
-            const thirtySecondNoteDuration = beatDuration / 8;
-            
-            // Calculate which slot this sustained beat corresponds to
-            const timeInCurrentPhrase = pulseTime - currentPhraseStart;
-            
-            // Handle phrase boundaries - if pulse is in previous phrase, ignore
-            if (timeInCurrentPhrase < 0 || timeInCurrentPhrase >= phraseDuration) {
-                return;
-            }
-            
-            const thirtySecondNoteIndex = Math.round(timeInCurrentPhrase / thirtySecondNoteDuration);
-            
-            // Clamp to phrase bounds
-            if (thirtySecondNoteIndex >= 0 && thirtySecondNoteIndex < currentPhrasePattern.length) {
-                // Only set duration if there's a pulse at this slot
-                if (currentPhrasePattern[thirtySecondNoteIndex]) {
-                    currentPhraseDurations[thirtySecondNoteIndex] = duration32nd;
-                }
-            }
-        },
-
         // Get current phrase pattern
         getCurrentPhrasePattern: function() {
             return currentPhrasePattern ? [...currentPhrasePattern] : null;
-        },
-
-        // Get current phrase durations
-        getCurrentPhraseDurations: function() {
-            return currentPhraseDurations ? [...currentPhraseDurations] : null;
         },
 
         // Get predicted patterns
@@ -706,37 +524,14 @@ const RHYTHM_PREDICTOR = (function() {
             return hyperPredictedPhrasePattern ? [...hyperPredictedPhrasePattern] : null;
         },
 
-        // Get predicted durations
-        getPredictedPhraseDurations: function() {
-            return predictedPhraseDurations ? [...predictedPhraseDurations] : null;
-        },
-
-        getPredictedFromCorrectDurations: function() {
-            return predictedFromCorrectDurations ? [...predictedFromCorrectDurations] : null;
-        },
-
-        getHyperPredictedDurations: function() {
-            return hyperPredictedDurations ? [...hyperPredictedDurations] : null;
-        },
-
         // Get all phrase patterns
         getPhrasePatterns: function() {
             return phrasePatterns.map(pattern => [...pattern]);
         },
 
-        // Get all phrase durations
-        getPhraseDurations: function() {
-            return phraseDurations.map(durations => [...durations]);
-        },
-
         // Get correct prediction patterns
         getCorrectPredictionPatterns: function() {
             return correctPredictionPatterns.map(pattern => [...pattern]);
-        },
-
-        // Get correct prediction durations
-        getCorrectPredictionDurations: function() {
-            return correctPredictionDurations.map(durations => [...durations]);
         },
 
         // Get prediction accuracy
@@ -748,15 +543,10 @@ const RHYTHM_PREDICTOR = (function() {
         reset: function() {
             currentPhraseStart = null;
             currentPhrasePattern = null;
-            currentPhraseDurations = null;
             predictedPhrasePattern = null;
-            predictedPhraseDurations = null;
             predictedFromCorrectPatterns = null;
-            predictedFromCorrectDurations = null;
             hyperPredictedPhrasePattern = null;
-            hyperPredictedDurations = null;
             phrasePatterns = [];
-            phraseDurations = [];
             phraseCount = 0;
             predictionAccuracy = [];
             hasLoggedFirstPhrase = false;
@@ -765,7 +555,6 @@ const RHYTHM_PREDICTOR = (function() {
             hasLoggedCorrectPatternPrediction = false;
             hasLoggedHyperPrediction = false;
             correctPredictionPatterns = [];
-            correctPredictionDurations = [];
         }
     };
 })();

@@ -467,6 +467,9 @@ Examples:
 
   # Reset state and deploy all
   python deploy-stacks.py --reset --all
+
+  # Deploy without CloudFront cache invalidation
+  python deploy-stacks.py --all --no-invalidate
         """
     )
     
@@ -486,8 +489,18 @@ Examples:
     parser.add_argument('--region', 
                        default=os.environ.get('AWS_REGION', 'us-east-1'),
                        help='AWS region (default: us-east-1)')
+    # Invalidation defaults to True (preserve existing behavior)
+    # Use --no-invalidate to disable
+    parser.add_argument('--invalidate', action='store_true', default=None,
+                       help='Invalidate CloudFront cache after S3 uploads (default: enabled)')
+    parser.add_argument('--no-invalidate', dest='invalidate', action='store_false',
+                       help='Skip CloudFront cache invalidation after S3 uploads')
     
     args = parser.parse_args()
+    
+    # Default invalidation to True if not explicitly set
+    if args.invalidate is None:
+        args.invalidate = True
     
     project_name = args.project
     environment = args.env
@@ -635,8 +648,39 @@ Examples:
         )
         
         if success:
-            # If this is the application stack, upload Lambda code
+            # If this is the application stack, build and upload Lambda code
             if stack_key == 'application':
+                print(f"\n[BUILD] Building Lambda package with Docker (Linux wheels)...")
+                try:
+                    # Build Lambda package using Docker
+                    build_script = Path(__file__).parent / 'build-lambda-docker.py'
+                    if build_script.exists():
+                        print(f"   Running: python {build_script.name}")
+                        build_result = subprocess.run(
+                            [sys.executable, str(build_script)],
+                            cwd=Path(__file__).parent,
+                            capture_output=True,
+                            text=True
+                        )
+                        
+                        if build_result.returncode == 0:
+                            print(f"   ✓ Lambda package built successfully with Docker")
+                            # Print any important output
+                            if build_result.stdout:
+                                for line in build_result.stdout.split('\n'):
+                                    if line.strip() and ('Package location' in line or 'Package size' in line):
+                                        print(f"   {line.strip()}")
+                        else:
+                            print(f"   ⚠️  Warning: Docker build failed")
+                            if build_result.stderr:
+                                print(f"   Error: {build_result.stderr[:200]}")
+                            print(f"   Will try to use existing package if available...")
+                    else:
+                        print(f"   ⚠️  Warning: build-lambda-docker.py not found, skipping Docker build")
+                except Exception as e:
+                    print(f"   ⚠️  Warning: Failed to build Lambda package with Docker: {e}")
+                    print(f"   Will try to use existing package if available...")
+                
                 print(f"\n[UPLOAD] Uploading Lambda function code...")
                 try:
                     # Get Lambda function name from stack outputs
@@ -707,10 +751,14 @@ Examples:
                                 except Exception as e:
                                     print(f"   ⚠️  Warning: Could not verify files in bucket: {e}")
                                 
-                                # Invalidate CloudFront cache
-                                if distribution_id and invalidate_cloudfront:
+                                # Invalidate CloudFront cache if requested
+                                if args.invalidate and distribution_id and invalidate_cloudfront:
                                     invalidate_cloudfront(distribution_id, region)
                                     print(f"   ✓ CloudFront cache invalidation initiated")
+                                elif not args.invalidate:
+                                    print(f"   ℹ️  CloudFront cache invalidation skipped (use --invalidate to enable)")
+                                elif not distribution_id:
+                                    print(f"   ⚠️  Warning: No CloudFront distribution ID found, cannot invalidate cache")
                             else:
                                 print(f"   ⚠️  Warning: Some files failed to upload. Check errors above.")
                         else:
@@ -762,10 +810,14 @@ Examples:
                                 except Exception as e:
                                     print(f"   ⚠️  Warning: Could not verify files in bucket: {e}")
                                 
-                                # Invalidate CloudFront cache
-                                if distribution_id and invalidate_diagnostics_cloudfront:
+                                # Invalidate CloudFront cache if requested
+                                if args.invalidate and distribution_id and invalidate_diagnostics_cloudfront:
                                     invalidate_diagnostics_cloudfront(distribution_id, region)
                                     print(f"   ✓ CloudFront cache invalidation initiated")
+                                elif not args.invalidate:
+                                    print(f"   ℹ️  CloudFront cache invalidation skipped (use --invalidate to enable)")
+                                elif not distribution_id:
+                                    print(f"   ⚠️  Warning: No CloudFront distribution ID found, cannot invalidate cache")
                             else:
                                 print(f"   ⚠️  Warning: Some files failed to upload. Check errors above.")
                         else:
@@ -842,6 +894,7 @@ Examples:
                 print(f"   - https://{diagnostics_url}/beacon.html")
                 print(f"   - https://{diagnostics_url}/detectorTest.html")
                 print(f"   - https://{diagnostics_url}/predictionCallDiagnostic.html")
+                print(f"   - https://{diagnostics_url}/backend-diagnostic.html")
                 print(f"   - https://{diagnostics_url}/simpleDetectorTest.html")
                 print(f"   - https://{diagnostics_url}/legacyDetectorTest.html")
                 print(f"   - https://{diagnostics_url}/microphoneInfo.html")

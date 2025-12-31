@@ -203,3 +203,6 @@ This tolerance is applied when **both values are non-zero**. If one is null and 
    - The slot is predicted to have a pulse
    - Historical duration data exists for that slot
 
+
+
+

@@ -13,6 +13,13 @@ echo "Using temp directory: $TEMP_DIR"
 cp lambda_function.py "$TEMP_DIR/"
 cp database.py "$TEMP_DIR/"
 
+# Copy prediction engine files from synchronizer
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cp "$PROJECT_ROOT/synchronizer/prediction_engine.py" "$TEMP_DIR/"
+cp "$PROJECT_ROOT/synchronizer/prediction_api.py" "$TEMP_DIR/"
+cp "$PROJECT_ROOT/synchronizer/slot_prior_model.py" "$TEMP_DIR/"
+
 # Install dependencies
 echo "Installing dependencies..."
 pip install -r requirements.txt -t "$TEMP_DIR/" --quiet
@@ -28,6 +35,9 @@ rm -rf "$TEMP_DIR"
 
 echo "Lambda package created: lambda-package.zip"
 echo "Package size: $(du -h lambda-package.zip | cut -f1)"
+
+
+
 
 
 

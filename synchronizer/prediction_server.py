@@ -160,8 +160,11 @@ class PredictionDatabase:
                     current_bpm REAL,
                     bpm_history TEXT,
                     recent_pulse_patterns TEXT,
+                    recent_pulse_durations TEXT,
                     recent_correct_prediction_parts TEXT,
+                    recent_correct_prediction_durations TEXT,
                     current_prediction TEXT,
+                    current_prediction_durations TEXT,
                     hashed_ip TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
@@ -173,6 +176,37 @@ class PredictionDatabase:
             except sqlite3.OperationalError:
                 # Column already exists, ignore
                 pass
+            
+            # Add duration columns if they don't exist (for existing databases)
+            for column_name in ['recent_pulse_durations', 'recent_correct_prediction_durations', 'current_prediction_durations']:
+                try:
+                    cursor.execute(f'ALTER TABLE predictions ADD COLUMN {column_name} TEXT')
+                except sqlite3.OperationalError:
+                    # Column already exists, ignore
+                    pass
+            
+            # Create sources table for pulse tracking
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    hashed_ip TEXT NOT NULL UNIQUE,
+                    emoji TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # Create pulse_timestamps table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pulse_timestamps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_id INTEGER NOT NULL,
+                    bpm REAL NOT NULL,
+                    pulse DATETIME NOT NULL,
+                    duration_ms INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (source_id) REFERENCES sources(id)
+                )
+            ''')
             
             # Create indexes for common queries
             cursor.execute('''
@@ -194,6 +228,18 @@ class PredictionDatabase:
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_hashed_ip 
                 ON predictions(hashed_ip)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_sources_hashed_ip 
+                ON sources(hashed_ip)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_pulse_timestamps_source_id 
+                ON pulse_timestamps(source_id)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_pulse_timestamps_pulse 
+                ON pulse_timestamps(pulse)
             ''')
             
             conn.commit()
@@ -218,17 +264,21 @@ class PredictionDatabase:
             cursor.execute('''
                 INSERT INTO predictions (
                     client_timestamp, server_timestamp, current_bpm,
-                    bpm_history, recent_pulse_patterns,
-                    recent_correct_prediction_parts, current_prediction, hashed_ip
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    bpm_history, recent_pulse_patterns, recent_pulse_durations,
+                    recent_correct_prediction_parts, recent_correct_prediction_durations,
+                    current_prediction, current_prediction_durations, hashed_ip
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 client_timestamp,
                 server_timestamp,
                 data.get('currentBPM'),
                 json.dumps(data.get('bpmHistory', [])),
                 json.dumps(data.get('recentPulsePatterns', [])),
+                json.dumps(data.get('recentPulseDurations')) if data.get('recentPulseDurations') is not None else None,
                 json.dumps(data.get('recentCorrectPredictionParts', [])),
+                json.dumps(data.get('recentCorrectPredictionDurations')) if data.get('recentCorrectPredictionDurations') is not None else None,
                 json.dumps(data.get('currentPrediction')),
+                json.dumps(data.get('currentPredictionDurations')) if data.get('currentPredictionDurations') is not None else None,
                 hashed_ip
             ))
             conn.commit()
@@ -318,9 +368,69 @@ class PredictionDatabase:
                 'max_bpm': stats['max_bpm'],
                 'unique_data_sources': unique_sources
             }
+    
+    def get_or_create_source(self, hashed_ip):
+        """Get or create a source record for a hashed IP, assigning an emoji if new"""
+        if not hashed_ip:
+            return None
+        
+        # Large emoji pool (same as PostgreSQL version)
+        emojis = [
+            '🟢', '🔵', '🟡', '🟠', '🔴', '🟣', '⚫', '⚪', 
+            '🟤', '🟥', '🟧', '🟨', '🟩', '🟦', '🟪', '⬛', 
+            '⬜', '🟫', '🔶', '🔷', '🔸', '🔹', '🔺', '🔻',
+            '💚', '💙', '💛', '🧡', '❤️', '💜', '🖤', '🤍',
+            '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖',
+            '⭐', '🌟', '✨', '💫', '⭐️', '🌟', '💫',
+            '🔥', '💧', '🌊', '🌈', '☀️', '🌙', '⭐', '☁️',
+        ]
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            # Try to get existing source
+            cursor.execute('SELECT id, emoji FROM sources WHERE hashed_ip = ?', (hashed_ip,))
+            result = cursor.fetchone()
+            
+            if result:
+                return result[0]
+            
+            # Source doesn't exist, create new one
+            cursor.execute('SELECT COUNT(*) FROM sources')
+            source_count = cursor.fetchone()[0]
+            emoji = emojis[source_count % len(emojis)]
+            
+            cursor.execute('''
+                INSERT INTO sources (hashed_ip, emoji)
+                VALUES (?, ?)
+            ''', (hashed_ip, emoji))
+            conn.commit()
+            source_id = cursor.lastrowid
+            print(f"Created new source: ID={source_id}, hash={hashed_ip[:16]}..., emoji={emoji}")
+            return source_id
+    
+    def insert_pulse_timestamps(self, pulses):
+        """Insert pulse timestamps into the database
+        
+        Args:
+            pulses: List of tuples (source_id, bpm, pulse_datetime, duration_ms)
+        """
+        if not pulses:
+            return 0
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany('''
+                INSERT INTO pulse_timestamps (source_id, bpm, pulse, duration_ms)
+                VALUES (?, ?, ?, ?)
+            ''', pulses)
+            conn.commit()
+            return cursor.rowcount
 
 # Global database instance
 db = None
+
+# Global prediction API instance
+prediction_api = None
 
 def certificate_needs_regeneration(cert_file, current_ip):
     """Check if certificate needs to be regenerated (doesn't include current IP)"""
@@ -429,7 +539,77 @@ def get_ssl_context():
 class PredictionRequestHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         """Handle POST requests with prediction data"""
-        if self.path == '/prediction' or self.path == '/prediction/':
+        global prediction_api
+        
+        # New prediction engine endpoints
+        if self.path == '/predict_phrase' or self.path == '/predict_phrase/':
+            try:
+                print(f"[SERVER] Received /predict_phrase request from {self.client_address}")
+                content_length = int(self.headers.get('Content-Length', 0))
+                print(f"[SERVER] Content-Length: {content_length}")
+                body = self.rfile.read(content_length) if content_length > 0 else b'{}'
+                print(f"[SERVER] Body read, length: {len(body)}")
+                request_data = json.loads(body.decode('utf-8')) if body else {}
+                print(f"[SERVER] Request parsed, calling handle_predict_phrase...")
+                
+                if prediction_api:
+                    response = prediction_api.handle_predict_phrase(request_data)
+                    print(f"[SERVER] Response received, status: {response.get('status', 'unknown')}")
+                else:
+                    response = {'status': 'error', 'message': 'Prediction engine not initialized'}
+                    print(f"[SERVER] ERROR: Prediction engine not initialized")
+                
+                print(f"[SERVER] Sending response...")
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                response_json = json.dumps(response).encode('utf-8')
+                self.wfile.write(response_json)
+                print(f"[SERVER] Response sent, length: {len(response_json)}")
+                return
+                
+            except Exception as e:
+                print(f"[SERVER] EXCEPTION in /predict_phrase handler: {e}")
+                import traceback
+                traceback.print_exc()
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                response = {'status': 'error', 'message': str(e)}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+        
+        elif self.path == '/pulse' or self.path == '/pulse/':
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                body = self.rfile.read(content_length)
+                request_data = json.loads(body.decode('utf-8'))
+                
+                if prediction_api:
+                    response = prediction_api.handle_pulse(request_data)
+                else:
+                    response = {'status': 'error', 'message': 'Prediction engine not initialized'}
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+                
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                response = {'status': 'error', 'message': str(e)}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+                return
+        
+        # Original prediction endpoint (for backward compatibility)
+        elif self.path == '/prediction' or self.path == '/prediction/':
             try:
                 # Read request body
                 content_length = int(self.headers.get('Content-Length', 0))
@@ -563,6 +743,32 @@ class PredictionRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header('Content-Type', 'text/plain')
                 self.end_headers()
                 self.wfile.write(f'Error serving viewer: {e}'.encode('utf-8'))
+        elif self.path == '/status' or self.path == '/status/':
+            # Prediction engine status
+            global prediction_api
+            if prediction_api:
+                try:
+                    response = prediction_api.handle_status()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(response, indent=2).encode('utf-8'))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    response = {'status': 'error', 'message': str(e)}
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+            else:
+                self.send_response(503)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                response = {'status': 'error', 'message': 'Prediction engine not initialized'}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+        
         elif self.path == '/stats' or self.path == '/stats/':
             # Return statistics
             if db is not None:
@@ -644,7 +850,7 @@ class PredictionRequestHandler(http.server.SimpleHTTPRequestHandler):
             super().log_message(format, *args)
 
 def main():
-    global db
+    global db, prediction_api
     
     # Get local IP
     local_ip = get_local_ip()
@@ -665,11 +871,35 @@ def main():
         print("  Server will continue without database storage.")
         db = None
     
+    # Initialize prediction engine (bootstrap mode by default)
+    try:
+        from prediction_api import PredictionAPI
+        from prediction_engine import PredictionMode
+        # Use bootstrap mode by default (per PredictorUpdates.md)
+        prediction_api = PredictionAPI(
+            database=db, 
+            initial_bpm=120.0,
+            mode=PredictionMode.BOOTSTRAP,
+            enable_async_training=False  # Disabled by default per PredictorUpdates.md
+        )
+        print(f"✓ Prediction engine initialized (mode: bootstrap)")
+    except Exception as e:
+        print(f"✗ Warning: Failed to initialize prediction engine: {e}")
+        print("  Prediction endpoints will not be available.")
+        import traceback
+        traceback.print_exc()
+        prediction_api = None
+    
     # Get SSL context
     ssl_context = get_ssl_context()
     
     print(f"\nLocal access:  https://localhost:{PORT}/prediction")
     print(f"Network access: https://{local_ip}:{PORT}/prediction")
+    if prediction_api:
+        print(f"\nPrediction engine endpoints:")
+        print(f"  - Predict phrase: POST https://localhost:{PORT}/predict_phrase")
+        print(f"  - Submit pulse: POST https://localhost:{PORT}/pulse")
+        print(f"  - Engine status: GET https://localhost:{PORT}/status")
     if db is not None:
         print(f"\nDatabase endpoints:")
         print(f"  - Viewer: https://localhost:{PORT}/")

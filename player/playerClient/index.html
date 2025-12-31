@@ -14,6 +14,12 @@
             min-height: 100vh;
             background-color: #121218;
             font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        #gameContainer {
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         canvas {
             border: 2px solid #333;
@@ -23,10 +29,161 @@
             width: auto;
             height: auto;
         }
+        #gameContainer:has(#beatPatternPanel.visible) canvas {
+            max-width: calc(100vw - 350px);
+        }
+        #beatPatternPanel {
+            width: 320px;
+            height: 100vh;
+            background-color: #1a1a24;
+            border-left: 2px solid #333;
+            padding: 15px;
+            box-sizing: border-box;
+            overflow-y: auto;
+            display: none;
+            flex-direction: column;
+            color: #e0e0e0;
+        }
+        #beatPatternPanel.visible {
+            display: flex;
+        }
+        #panelToggle {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            padding: 10px 15px;
+            background-color: #2a2a3a;
+            color: #e0e0e0;
+            border: 2px solid #444;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-family: Arial, sans-serif;
+        }
+        #panelToggle:hover {
+            background-color: #3a3a4a;
+        }
+        .panel-section {
+            margin-bottom: 20px;
+        }
+        .panel-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #4a9eff;
+            border-bottom: 1px solid #333;
+            padding-bottom: 5px;
+        }
+        #patternVisualization {
+            background-color: #0f0f15;
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 15px;
+            position: relative;
+            min-height: 200px;
+        }
+        .pattern-slot {
+            display: inline-block;
+            min-width: 8px;
+            height: 24px;
+            margin: 1px;
+            background-color: #2a2a3a;
+            border: 1px solid #1a1a1a;
+            vertical-align: top;
+            border-radius: 2px;
+            transition: all 0.1s ease;
+        }
+        .pattern-slot.active {
+            background-color: #4a9eff;
+            border-color: #6ab0ff;
+            box-shadow: 0 0 3px rgba(74, 158, 255, 0.5);
+        }
+        .pattern-slot.sustained {
+            background-color: #9a4aff;
+            border-color: #ba6aff;
+            box-shadow: 0 0 3px rgba(154, 74, 255, 0.5);
+        }
+        .pattern-slot.current {
+            background-color: #ffff00 !important;
+            border-color: #ffff00 !important;
+            box-shadow: 0 0 8px #ffff00, 0 0 12px #ffff00, inset 0 0 8px rgba(255, 255, 0, 0.5);
+            z-index: 10;
+            position: relative;
+            transform: scale(1.2);
+        }
+        .pattern-slot.marker {
+            background-color: #ff6a4a !important;
+            border-color: #ff8a6a !important;
+            box-shadow: 0 0 4px rgba(255, 106, 74, 0.8);
+            animation: pulse-marker 1s ease-in-out infinite;
+        }
+        @keyframes pulse-marker {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        .pattern-slot.current.marker {
+            background-color: #ffaa00 !important;
+            border-color: #ffcc00 !important;
+            box-shadow: 0 0 10px #ffaa00, 0 0 15px #ffaa00;
+        }
+        .pattern-beat-divider {
+            border-left: 2px solid #444;
+            margin: 0 2px;
+            display: inline-block;
+            height: 20px;
+        }
+        #markersList {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .marker-item {
+            padding: 8px;
+            margin-bottom: 5px;
+            background-color: #1a1a24;
+            border: 1px solid #333;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .marker-item.sustained {
+            border-left: 3px solid #9a4aff;
+        }
+        .marker-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 3px;
+        }
+        .marker-label {
+            font-weight: bold;
+            color: #4a9eff;
+        }
+        .marker-time {
+            color: #aaa;
+        }
+        .info-text {
+            font-size: 12px;
+            color: #aaa;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
-    <canvas id="gameCanvas"></canvas>
+    <button id="panelToggle">Toggle Pattern View</button>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="beatPatternPanel">
+            <div class="panel-section">
+                <div class="panel-title">Beat Pattern</div>
+                <div id="patternVisualization"></div>
+                <div class="info-text" id="patternInfo">No prediction available</div>
+            </div>
+            <div class="panel-section">
+                <div class="panel-title">Active Markers (<span id="markerCount">0</span>)</div>
+                <div id="markersList"></div>
+            </div>
+        </div>
+    </div>
     <script src="../beatDetector/js/logger.js"></script>
     <script src="../config/config.js"></script>
     <script>
@@ -49,6 +206,16 @@
     <script src="../beatDetector/js/beatDetection.js"></script>
     <script src="js/target.js"></script>
     <script src="js/marker.js"></script>
+    <script src="js/gameLoopOutline.js"></script>
+    <script src="js/gameHelpers.js"></script>
+    <script src="js/predictionApi.js"></script>
+    <script src="js/gameState.js"></script>
+    <script src="js/beatIntegration.js"></script>
+    <script src="js/predictionSelection.js"></script>
+    <script src="js/gameLoopLogic.js"></script>
+    <script src="js/gameRenderer.js"></script>
+    <script src="js/inputHandlers.js"></script>
+    <script src="js/beatPatternVisualizer.js"></script>
     <script src="js/game.js"></script>
 </body>
 </html>

@@ -26,11 +26,12 @@ def update_client_files(api_endpoint):
         print("No API endpoint provided")
         return False
     
-    prediction_url = f"{api_endpoint}/prediction"
+    prediction_url = f"{api_endpoint}/predict_phrase"
     
     # Files to update
     files_to_update = [
-        '../player/playerClient/js/game.js',
+        '../player/playerClient/js/predictionApi.js',
+        '../player/playerClient/js/game.js',  # Keep for backward compatibility
         '../player/diagnostics/predictionCallDiagnostic.html',
     ]
     
@@ -46,8 +47,8 @@ def update_client_files(api_endpoint):
             content = path.read_text(encoding='utf-8')
             
             # Update PREDICTION_SERVER_URL constant
-            old_pattern = r"const PREDICTION_SERVER_URL = ['\"](https?://[^'\"]+)['\"]"
             import re
+            old_pattern = r"const PREDICTION_SERVER_URL = ['\"](https?://[^'\"]+)['\"]"
             
             if re.search(old_pattern, content):
                 new_content = re.sub(

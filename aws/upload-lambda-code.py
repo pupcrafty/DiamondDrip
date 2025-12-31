@@ -50,6 +50,24 @@ def build_lambda_package(output_zip=None):
         shutil.copy2(lambda_function, temp_dir / 'lambda_function.py')
         shutil.copy2(database, temp_dir / 'database.py')
         
+        # Copy prediction engine files from synchronizer/
+        project_root = script_dir.parent
+        synchronizer_dir = project_root / 'synchronizer'
+        prediction_files = [
+            'prediction_engine.py',
+            'prediction_api.py',
+            'slot_prior_model.py'
+        ]
+        
+        print(f"Copying prediction engine files...")
+        for filename in prediction_files:
+            src_file = synchronizer_dir / filename
+            if src_file.exists():
+                shutil.copy2(src_file, temp_dir / filename)
+                print(f"  Copied {filename}")
+            else:
+                print(f"WARNING:  Warning: {filename} not found at {src_file}")
+        
         # Install dependencies
         requirements = script_dir / 'requirements.txt'
         if requirements.exists():
@@ -223,7 +241,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Build and upload using stack name
+  # Build and upload using default application stack
+  python upload-lambda-code.py
+
+  # Build and upload using specific stack name
   python upload-lambda-code.py --stack-name diamonddrip-production-application
 
   # Build and upload using function name
@@ -235,9 +256,15 @@ Examples:
     )
     
     parser.add_argument('--stack-name', '-s',
-                       help='CloudFormation stack name (application stack)')
+                       help='CloudFormation stack name (application stack). Defaults to {project}-{env}-application')
     parser.add_argument('--function-name', '-f',
                        help='Lambda function name')
+    parser.add_argument('--project', '-p',
+                       default=os.environ.get('PROJECT_NAME', 'diamonddrip'),
+                       help='Project name (default: diamonddrip)')
+    parser.add_argument('--env', '-e',
+                       default=os.environ.get('ENVIRONMENT', 'production'),
+                       help='Environment (default: production)')
     parser.add_argument('--zip-file', '-z',
                        help='Path to existing zip file (default: checks for lambda-package-docker.zip or lambda-package.zip)')
     parser.add_argument('--region', '-r',
@@ -246,12 +273,19 @@ Examples:
     
     args = parser.parse_args()
     
+    # Determine stack name - default to application stack if not provided
+    stack_name = args.stack_name
+    if not stack_name and not args.function_name:
+        # Default to application stack
+        stack_name = f'{args.project}-{args.env}-application'
+        print(f"Using default application stack: {stack_name}")
+    
     # Determine function name
     function_name = args.function_name
-    if not function_name and args.stack_name:
-        function_name = get_lambda_function_name(args.stack_name, args.region)
+    if not function_name and stack_name:
+        function_name = get_lambda_function_name(stack_name, args.region)
         if not function_name:
-            print(f"ERROR: Could not determine Lambda function name from stack: {args.stack_name}")
+            print(f"ERROR: Could not determine Lambda function name from stack: {stack_name}")
             sys.exit(1)
     
     # Get zip file - prefer docker zip, then specified file, build if neither exists
@@ -286,7 +320,8 @@ Examples:
     
     # Upload if function name is provided
     if not function_name:
-        print(f"ERROR: Must specify --function-name or --stack-name to upload")
+        print(f"ERROR: Could not determine Lambda function name.")
+        print(f"   Please specify --function-name, --stack-name, or ensure the default application stack exists.")
         sys.exit(1)
     
     success = upload_lambda_code(function_name, zip_file, args.region)

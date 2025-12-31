@@ -5,3 +5,6 @@ python redeploy-with-logs.py %*
 pause
 
 
+
+
+

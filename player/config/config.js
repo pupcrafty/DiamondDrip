@@ -71,12 +71,24 @@ function calculateCanvasDimensions() {
     WIDTH = Math.round(newWidth);
     HEIGHT = Math.round(newHeight);
     
+    // Ensure minimum dimensions (fallback if window is too small)
+    if (WIDTH <= 0 || HEIGHT <= 0 || !isFinite(WIDTH) || !isFinite(HEIGHT)) {
+        console.warn('[CONFIG] Invalid dimensions calculated, using fallback:', WIDTH, 'x', HEIGHT);
+        WIDTH = 1000;
+        HEIGHT = 1000;
+    }
+    
     // Update all size constants
     updateSizeConstants();
 }
 
 // BPM Processing
 const MAX_BPM_BEFORE_HALVING = 200;  // If BPM exceeds this value, assume double counting and halve it
+
+// -----------------------------
+// Pattern Visualizer Configuration
+// -----------------------------
+const ENABLE_PATTERN_VISUALIZER = true;  // Set to true to enable the beat pattern side panel
 
 // -----------------------------
 // Logging Configuration

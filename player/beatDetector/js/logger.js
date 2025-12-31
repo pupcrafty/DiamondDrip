@@ -16,6 +16,8 @@ class Logger {
             PULSE_PATTERN: true,          // 🎵 Pulse pattern listening
             SUSTAINED: false,             // 🎵 Sustained beat detection events
             SUSTAINED_PREDICTION: false,  // 🎯 Sustained beat prediction events
+            INTEGRATION: false,           // 🔗 Integration/API logging (prediction API calls)
+            RENDER: true,                 // 🎨 Render logging (canvas rendering events)
             ERROR: true,                   // ❌ Errors (always recommended to keep on)
             TARGET_SCORES: true            // 📊 Show target scores next to each target
         };
@@ -32,6 +34,9 @@ class Logger {
             'PULSE_PATTERN': 'PULSE_PATTERN',
             'SUSTAINED': 'SUSTAINED',
             'SUSTAINED_PREDICTION': 'SUSTAINED_PREDICTION',
+            'INTEGRATION': 'INTEGRATION',
+            'RENDER': 'RENDER',
+            'RENDERER': 'RENDER',
             'ERROR': 'ERROR'
         };
     }

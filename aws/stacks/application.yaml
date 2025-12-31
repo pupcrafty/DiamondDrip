@@ -59,7 +59,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub '${ProjectName}-${Environment}-prediction-server'
-      Runtime: python3.11
+      Runtime: python3.12
       Handler: lambda_function.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Code:
@@ -159,6 +159,13 @@ Resources:
     Properties:
       ApiId: !Ref ApiGateway
       RouteKey: 'GET /'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  
+  ApiRoutePredictPhrase:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'POST /predict_phrase'
       Target: !Sub 'integrations/${ApiIntegration}'
   
   # API Gateway Stage

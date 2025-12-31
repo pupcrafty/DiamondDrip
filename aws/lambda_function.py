@@ -2,11 +2,14 @@
 AWS Lambda function for DiamondDrip Prediction Server
 Handles prediction data via API Gateway
 """
+print("[LAMBDA_INIT] Starting Lambda function module initialization...")
 import json
 import os
 import hashlib
-from datetime import datetime
-from typing import Dict, Any, Optional
+import threading
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Any, Optional, List, Tuple
+print("[LAMBDA_INIT] Standard library imports complete")
 
 # Import database adapter (will be RDS PostgreSQL)
 try:
@@ -14,6 +17,31 @@ try:
 except ImportError:
     # Fallback for local testing
     PredictionDatabase = None
+
+# Import prediction engine
+try:
+    from prediction_api import PredictionAPI
+    from prediction_engine import PredictionMode
+    PREDICTION_ENGINE_AVAILABLE = True
+    print("Successfully imported prediction engine modules")
+except ImportError as e:
+    import traceback
+    error_msg = str(e)
+    traceback_str = traceback.format_exc()
+    print(f"ERROR: Prediction engine import failed: {error_msg}")
+    print(f"Traceback: {traceback_str}")
+    PREDICTION_ENGINE_AVAILABLE = False
+    PredictionAPI = None
+    PredictionMode = None
+except Exception as e:
+    import traceback
+    error_msg = str(e)
+    traceback_str = traceback.format_exc()
+    print(f"ERROR: Unexpected error importing prediction engine: {error_msg}")
+    print(f"Traceback: {traceback_str}")
+    PREDICTION_ENGINE_AVAILABLE = False
+    PredictionAPI = None
+    PredictionMode = None
 
 # Import boto3 for Secrets Manager (optional)
 try:
@@ -24,6 +52,9 @@ except ImportError:
 
 # Initialize database connection (reused across Lambda invocations)
 db = None
+
+# Initialize prediction API (reused across Lambda invocations)
+prediction_api = None
 
 def get_secrets_manager_credentials(secret_arn: str) -> Optional[Dict[str, str]]:
     """Get database credentials from AWS Secrets Manager"""
@@ -44,6 +75,21 @@ def get_secrets_manager_credentials(secret_arn: str) -> Optional[Dict[str, str]]
     except Exception as e:
         print(f"Warning: Failed to retrieve credentials from Secrets Manager: {e}")
         return None
+
+def get_prediction_api():
+    """Get or create prediction API instance"""
+    global prediction_api
+    if prediction_api is None and PREDICTION_ENGINE_AVAILABLE:
+        db = get_database()
+        # Use bootstrap mode by default (faster, uses slot priors from DB)
+        prediction_api = PredictionAPI(
+            database=db,
+            initial_bpm=120.0,
+            mode=PredictionMode.BOOTSTRAP,
+            enable_async_training=False
+        )
+        print("Prediction API initialized")
+    return prediction_api
 
 def get_database():
     """Get or create database connection"""
@@ -188,6 +234,18 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             else:
                 return create_response(405, {'error': 'Method not allowed'})
         
+        elif path == '/sources':
+            if http_method == 'GET':
+                return handle_sources_get()
+            else:
+                return create_response(405, {'error': 'Method not allowed'})
+        
+        elif path == '/predict_phrase':
+            if http_method == 'POST':
+                return handle_predict_phrase_post(event)
+            else:
+                return create_response(405, {'error': 'Method not allowed'})
+        
         elif path == '/' or path == '/health':
             return handle_health_check()
         
@@ -197,7 +255,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'error': 'Not found',
                 'path': path,
                 'method': http_method,
-                'available_paths': ['/prediction', '/stats', '/recent', '/health', '/']
+                'available_paths': ['/prediction', '/predict_phrase', '/stats', '/recent', '/health', '/']
             })
     
     except Exception as e:
@@ -211,6 +269,155 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'error': 'Internal server error',
             'message': error_msg
         })
+
+def extract_pulses_from_patterns(body: Dict[str, Any], client_timestamp_str: str, source_id: Optional[int] = None) -> List[Tuple[int, float, datetime, Optional[int]]]:
+    """Extract pulse timestamps from ACTUAL patterns only (not predictions)
+    
+    This function processes only actual measured pulse data for use in server-side
+    prediction analysis. It does NOT process any predicted patterns.
+    
+    Actual data sources:
+    - recentPulsePatterns: Actual pulse patterns that occurred
+    - recentPulseDurations: Actual sustained beat durations
+    
+    NOT processed (predictions):
+    - currentPrediction: Predicted future pattern (ignored)
+    - currentPredictionDurations: Predicted durations (ignored)
+    
+    Args:
+        body: Request body containing prediction data
+        client_timestamp_str: Client timestamp as ISO string
+        source_id: Source ID from sources table (required)
+    
+    Returns:
+        List of tuples (source_id, bpm, pulse_timestamp, duration_ms) where timestamp is UTC
+    """
+    pulses = []
+    
+    if source_id is None:
+        print("Warning: source_id is required for pulse extraction")
+        return pulses
+    
+    try:
+        # Parse client timestamp
+        try:
+            # Handle various timestamp formats
+            ts_str = client_timestamp_str.replace('Z', '+00:00')
+            if '+' not in ts_str and ':' in ts_str and ts_str.count('-') >= 3:
+                # Likely missing timezone, assume UTC
+                ts_str += '+00:00'
+            client_timestamp = datetime.fromisoformat(ts_str)
+            # Convert to naive UTC datetime
+            if client_timestamp.tzinfo is not None:
+                client_timestamp = client_timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+        except Exception as e:
+            print(f"Warning: Could not parse client timestamp '{client_timestamp_str}': {e}")
+            # Fallback to current time if parsing fails
+            client_timestamp = datetime.utcnow()
+        
+        current_bpm = body.get('currentBPM')
+        if not current_bpm or current_bpm <= 0:
+            return pulses
+        
+        # Process ONLY ACTUAL pulse patterns (measured, not predicted)
+        # These represent real pulses that occurred in the audio
+        recent_patterns = body.get('recentPulsePatterns', [])
+        recent_durations = body.get('recentPulseDurations', [])
+        
+        # NOTE: We explicitly do NOT process:
+        # - body.get('currentPrediction') - this is predicted data
+        # - body.get('currentPredictionDurations') - this is predicted data
+        # - body.get('recentCorrectPredictionParts') - these are actual but filtered
+        
+        if not recent_patterns or not isinstance(recent_patterns, list):
+            return pulses
+        
+        # Constants for pattern structure
+        PHRASE_BEATS = 4  # 4 beats per phrase
+        BEATS_PER_PHRASE = 4
+        SLOTS_PER_PATTERN = 32  # 4 beats * 8 thirty-second notes per beat
+        
+        # Calculate timing based on BPM
+        beat_duration_seconds = 60.0 / current_bpm
+        phrase_duration_seconds = beat_duration_seconds * BEATS_PER_PHRASE
+        thirty_second_note_duration_seconds = beat_duration_seconds / 8.0
+        
+        # Process ACTUAL patterns (most recent first)
+        # Each pattern in recentPulsePatterns represents an actual phrase that occurred
+        # We calculate timestamps going backwards from the client timestamp
+        for pattern_idx, pattern in enumerate(reversed(recent_patterns)):
+            # Validate pattern structure (must be exactly 32 slots)
+            if not pattern or not isinstance(pattern, list) or len(pattern) != SLOTS_PER_PATTERN:
+                continue
+            
+            # Get corresponding ACTUAL durations if available
+            durations = None
+            if recent_durations and isinstance(recent_durations, list) and len(recent_durations) > pattern_idx:
+                durations = recent_durations[len(recent_durations) - 1 - pattern_idx]
+            
+            # Calculate phrase start time (going backwards from client timestamp)
+            # Most recent phrase ends just before client timestamp
+            # Each earlier phrase is one phrase duration earlier
+            phrases_before_current = pattern_idx
+            phrase_end_time = client_timestamp - timedelta(seconds=phrases_before_current * phrase_duration_seconds)
+            phrase_start_time = phrase_end_time - timedelta(seconds=phrase_duration_seconds)
+            
+            # Extract ACTUAL pulses from this pattern
+            # Each True value in the pattern represents a real pulse that was detected
+            for slot_idx, is_pulse in enumerate(pattern):
+                if is_pulse:
+                    # Calculate pulse timestamp within the phrase
+                    # Each slot represents a 32nd note position
+                    slot_offset_seconds = slot_idx * thirty_second_note_duration_seconds
+                    pulse_timestamp = phrase_start_time + timedelta(seconds=slot_offset_seconds)
+                    
+                    # Get ACTUAL duration if available (from sustained beat detection)
+                    duration_ms = None
+                    if durations and isinstance(durations, list) and slot_idx < len(durations):
+                        duration_32nd = durations[slot_idx]
+                        if duration_32nd is not None and duration_32nd > 0:
+                            # Convert 32nd note duration to milliseconds
+                            # duration_32nd is the actual measured duration from sustained beat detector
+                            duration_seconds = duration_32nd * thirty_second_note_duration_seconds
+                            duration_ms = int(duration_seconds * 1000)
+                    
+                    # Store: (source_id, bpm, pulse_timestamp, duration_ms)
+                    # This is actual measured data for server-side prediction analysis
+                    pulses.append((source_id, current_bpm, pulse_timestamp, duration_ms))
+        
+    except Exception as e:
+        print(f"Error extracting pulses from patterns: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return pulses
+
+def process_pulses_async(body: Dict[str, Any], client_timestamp_str: str, hashed_ip: str):
+    """Process and store pulse timestamps asynchronously"""
+    try:
+        db = get_database()
+        if db is None:
+            print("Warning: Database not available for pulse timestamp storage")
+            return
+        
+        # Get or create source for this hashed IP
+        source_id = db.get_or_create_source(hashed_ip)
+        if source_id is None:
+            print("Warning: Could not get or create source")
+            return
+        
+        # Extract pulses with source_id
+        pulses = extract_pulses_from_patterns(body, client_timestamp_str, source_id)
+        
+        if not pulses:
+            return
+        
+        inserted_count = db.insert_pulse_timestamps(pulses)
+        print(f"Processed and stored {inserted_count} pulse timestamps for source_id={source_id}")
+    except Exception as e:
+        print(f"Error in async pulse processing: {e}")
+        import traceback
+        traceback.print_exc()
 
 def handle_prediction_post(event: Dict[str, Any]) -> Dict[str, Any]:
     """Handle POST /prediction requests"""
@@ -251,6 +458,15 @@ def handle_prediction_post(event: Dict[str, Any]) -> Dict[str, Any]:
             except Exception as e:
                 print(f"[{server_timestamp}] Warning: Failed to store in database: {e}")
         
+        # Process pulses asynchronously (don't block response)
+        if client_timestamp != 'not provided' and hashed_ip:
+            thread = threading.Thread(
+                target=process_pulses_async,
+                args=(body, client_timestamp, hashed_ip),
+                daemon=True
+            )
+            thread.start()
+        
         # Return success response
         return create_response(200, {
             'status': 'success',
@@ -264,6 +480,91 @@ def handle_prediction_post(event: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         print(f"Error handling prediction: {e}")
         return create_response(500, {'error': 'Internal server error', 'details': str(e)})
+
+def handle_predict_phrase_post(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle POST /predict_phrase requests with full prediction engine integration"""
+    try:
+        # Check if prediction engine is available
+        print(f"[PREDICT_PHRASE] PREDICTION_ENGINE_AVAILABLE = {PREDICTION_ENGINE_AVAILABLE}")
+        if not PREDICTION_ENGINE_AVAILABLE:
+            server_timestamp = datetime.utcnow().isoformat()
+            print(f"[PREDICT_PHRASE] Prediction engine not available, returning error")
+            return create_response(503, {
+                'status': 'error',
+                'error': 'Prediction engine not available',
+                'message': 'The prediction engine modules are not available in this Lambda deployment.',
+                'server_timestamp': server_timestamp
+            })
+        
+        # Parse request body
+        if 'body' in event:
+            if isinstance(event['body'], str):
+                body = json.loads(event['body'])
+            else:
+                body = event['body']
+        else:
+            return create_response(400, {'error': 'Missing request body'})
+        
+        # Log the request for debugging
+        sequence_id = body.get('sequence_id', 'unknown')
+        print(f"[PREDICT_PHRASE] Received request: sequence_id={sequence_id}")
+        print(f"[PREDICT_PHRASE] BPM: {body.get('currentBPM', 'N/A')}")
+        print(f"[PREDICT_PHRASE] Pulse count: {len(body.get('recentPulseTimestamps', []))}")
+        print(f"[PREDICT_PHRASE] Pattern count: {len(body.get('recentPulsePatterns', []))}")
+        
+        # Get device info for hashing (used for source identification)
+        request_context = event.get('requestContext', {})
+        source_ip = request_context.get('identity', {}).get('sourceIp', 'unknown')
+        user_agent = event.get('headers', {}).get('User-Agent', event.get('headers', {}).get('user-agent', 'unknown'))
+        
+        device_type, browser = extract_device_info(user_agent)
+        salt_string = f"{source_ip}:{device_type}:{browser}"
+        hashed_ip = hashlib.sha256(salt_string.encode('utf-8')).hexdigest()
+        
+        # Add device_id to body if not present (for prediction API)
+        if 'device_id' not in body:
+            body['device_id'] = hashed_ip
+        
+        # Get prediction API instance
+        api = get_prediction_api()
+        if api is None:
+            server_timestamp = datetime.utcnow().isoformat()
+            return create_response(503, {
+                'status': 'error',
+                'error': 'Prediction API not initialized',
+                'message': 'Failed to initialize prediction API. Database may not be available.',
+                'server_timestamp': server_timestamp
+            })
+        
+        # Call prediction API to handle the request
+        print(f"[PREDICT_PHRASE] Calling prediction API...")
+        result = api.handle_predict_phrase(body)
+        print(f"[PREDICT_PHRASE] Prediction API returned: status={result.get('status')}")
+        
+        # Add server timestamp to response
+        server_timestamp = datetime.utcnow().isoformat()
+        result['server_timestamp'] = server_timestamp
+        
+        # Return appropriate status code based on result
+        if result.get('status') == 'success':
+            return create_response(200, result)
+        else:
+            # Error response from prediction API
+            return create_response(500, result)
+    
+    except json.JSONDecodeError as e:
+        return create_response(400, {'error': 'Invalid JSON', 'details': str(e)})
+    except Exception as e:
+        print(f"Error handling predict_phrase: {e}")
+        import traceback
+        traceback.print_exc()
+        server_timestamp = datetime.utcnow().isoformat()
+        return create_response(500, {
+            'status': 'error',
+            'error': 'Internal server error',
+            'message': str(e),
+            'server_timestamp': server_timestamp
+        })
 
 def handle_prediction_get() -> Dict[str, Any]:
     """Handle GET /prediction requests - returns latest averaged BPM"""
@@ -331,6 +632,21 @@ def handle_recent_get(event: Dict[str, Any]) -> Dict[str, Any]:
         
         predictions = db.get_recent_predictions(limit=limit)
         return create_response(200, predictions)
+    except Exception as e:
+        return create_response(500, {'error': str(e)})
+
+def handle_sources_get() -> Dict[str, Any]:
+    """Handle GET /sources requests - returns all sources with emojis"""
+    db = get_database()
+    if db is None:
+        return create_response(503, {
+            'status': 'error',
+            'error': 'Database not available'
+        })
+    
+    try:
+        sources = db.get_all_sources()
+        return create_response(200, sources)
     except Exception as e:
         return create_response(500, {'error': str(e)})
 

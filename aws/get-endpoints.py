@@ -210,6 +210,7 @@ Examples:
                         print(f"     {full_url}/beacon.html")
                         print(f"     {full_url}/detectorTest.html")
                         print(f"     {full_url}/predictionCallDiagnostic.html")
+                        print(f"     {full_url}/backend-diagnostic.html")
                         print(f"     {full_url}/simpleDetectorTest.html")
                         print(f"     {full_url}/legacyDetectorTest.html")
                         print(f"     {full_url}/microphoneInfo.html")
