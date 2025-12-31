@@ -209,6 +209,14 @@ async function requestServerPrediction() {
         const urlToUse = getBestServerURL(currentServerURL);
         
         // Log API request
+        console.log('[INTEGRATION] 📡 Sending prediction request:', {
+            url: urlToUse,
+            bpm: hyperBPM?.toFixed(1),
+            pulseCount: recentPulseTimestamps.length,
+            patternCount: recentPulsePatterns.length,
+            bufferSize: pulseBuffer.length,
+            sequenceId: payload.sequence_id
+        });
         log('INTEGRATION', '[INTEGRATION] 📡 Sending prediction request:', {
             url: urlToUse,
             bpm: hyperBPM?.toFixed(1),
@@ -226,6 +234,7 @@ async function requestServerPrediction() {
         const requestStartTime = performance.now();
         
         // Send request
+        console.log('[INTEGRATION] 🌐 Fetching:', urlToUse, 'with payload:', JSON.stringify(payload).substring(0, 200) + '...');
         const response = await fetch(urlToUse, {
             method: 'POST',
             headers: {
@@ -361,8 +370,16 @@ const MIN_REQUEST_INTERVAL_MS = 1000; // Minimum time between requests (1 second
 // Check if we need a new prediction and request it if needed
 // This should be called from the game loop periodically
 function checkAndRequestPredictionIfNeeded() {
+    // Log function entry occasionally to confirm it's being called
+    if (Math.random() < 0.001) {
+        log('INTEGRATION', '[INTEGRATION] 🔍 checkAndRequestPredictionIfNeeded() called');
+    }
+    
     // Don't make concurrent requests
     if (predictionRequestInProgress) {
+        if (Math.random() < 0.01) { // Log occasionally to avoid spam
+            log('INTEGRATION', '[INTEGRATION] ⏸️ Request already in progress, skipping...');
+        }
         return;
     }
     
@@ -373,6 +390,10 @@ function checkAndRequestPredictionIfNeeded() {
         const timeSinceOpen = now - circuitBreakerOpenTime;
         if (timeSinceOpen < CIRCUIT_BREAKER_RESET_MS) {
             // Still in backoff period
+            if (Math.random() < 0.01) { // Log occasionally to avoid spam
+                const remainingMs = CIRCUIT_BREAKER_RESET_MS - timeSinceOpen;
+                log('INTEGRATION', `[INTEGRATION] 🔒 Circuit breaker open, skipping (retry in ${(remainingMs/1000).toFixed(1)}s)`);
+            }
             return;
         } else {
             // Try recovery
@@ -383,7 +404,22 @@ function checkAndRequestPredictionIfNeeded() {
     
     // Enforce minimum interval between requests
     if (lastApiCallTime > 0 && (now - lastApiCallTime) < MIN_REQUEST_INTERVAL_MS) {
-        return; // Too soon since last request
+        // Too soon since last request
+        if (Math.random() < 0.01) { // Log occasionally to avoid spam
+            const timeSinceLastCall = now - lastApiCallTime;
+            log('INTEGRATION', `[INTEGRATION] ⏱️ Too soon since last request (${timeSinceLastCall.toFixed(0)}ms < ${MIN_REQUEST_INTERVAL_MS}ms), skipping...`);
+        }
+        return;
+    }
+    
+    // Check if we have BPM data before making a request
+    const hyperBPM = typeof BPM_ESTIMATOR !== 'undefined' ? BPM_ESTIMATOR.getHyperSmoothedBPM() : null;
+    if (hyperBPM === null || hyperBPM <= 0) {
+        // No BPM data yet - can't make a meaningful request
+        if (Math.random() < 0.01) { // Log occasionally to avoid spam
+            log('INTEGRATION', '[INTEGRATION] ⏳ Waiting for BPM data before making prediction request...');
+        }
+        return;
     }
     
     // Check if we need a new prediction
@@ -392,6 +428,7 @@ function checkAndRequestPredictionIfNeeded() {
     if (!serverPrediction || !serverPredictionReady) {
         // No prediction available - request one
         needsNewPrediction = true;
+        console.log('[INTEGRATION] 📡 No prediction available, requesting... (BPM:', hyperBPM?.toFixed(1), ')');
         log('INTEGRATION', '[INTEGRATION] 📡 No prediction available, requesting...');
     } else {
         // Calculate when current prediction expires
@@ -408,14 +445,28 @@ function checkAndRequestPredictionIfNeeded() {
     }
     
     if (needsNewPrediction) {
+        console.log('[INTEGRATION] 🚀 Making API call to prediction server...');
+        log('INTEGRATION', '[INTEGRATION] 🚀 Making API call to prediction server...');
         predictionRequestInProgress = true;
         requestServerPrediction()
             .then(() => {
                 predictionRequestInProgress = false;
             })
-            .catch(() => {
+            .catch((error) => {
+                console.error('[INTEGRATION] ❌ Error in requestServerPrediction:', error);
                 predictionRequestInProgress = false;
             });
+    } else {
+        // Log why we're not making a request (occasionally to avoid spam)
+        if (Math.random() < 0.005) {
+            if (serverPrediction && serverPredictionReady) {
+                const phraseStartLocalMs = convertServerTimeToLocal(serverPrediction.phrase_start_server_ms);
+                const phraseDurationMs = (serverPrediction.phrase_beats || 4) * (60.0 / serverPrediction.bpm) * 1000.0;
+                const phraseEndLocalMs = phraseStartLocalMs + phraseDurationMs;
+                const timeUntilExpiry = phraseEndLocalMs - now;
+                log('INTEGRATION', `[INTEGRATION] ℹ️ Prediction still valid (expires in ${(timeUntilExpiry/1000).toFixed(1)}s), no request needed`);
+            }
+        }
     }
 }
 

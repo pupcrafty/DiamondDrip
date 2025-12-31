@@ -200,10 +200,10 @@ function getActivePrediction() {
     // Convert durations array to match server format (128 slots)
     const durSlots = [];
     for (let i = 0; i < 128; i++) {
-        if (i < hyperPrediction.length && hyperPrediction[i] && hyperPredictedDurations && hyperPredictedDurations[i] !== null) {
+        if (i < hyperPrediction.length && hyperPrediction[i] && hyperPredictedDurations && hyperPredictedDurations[i] !== null && hyperPredictedDurations[i] > 0) {
             durSlots[i] = hyperPredictedDurations[i];
         } else {
-            durSlots[i] = 0;
+            durSlots[i] = 0; // No duration (single beat)
         }
     }
     

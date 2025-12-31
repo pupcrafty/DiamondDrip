@@ -13,6 +13,12 @@ function updateGameLogic(t) {
     // Check if we need a new prediction and request it on-demand
     if (typeof checkAndRequestPredictionIfNeeded === 'function') {
         checkAndRequestPredictionIfNeeded();
+    } else {
+        // Log warning if function is not available (only once)
+        if (!window._predictionApiWarningLogged) {
+            console.warn('[GAME] ⚠️ checkAndRequestPredictionIfNeeded() is not available! Make sure predictionApi.js is loaded.');
+            window._predictionApiWarningLogged = true;
+        }
     }
     
     // Debug: log state periodically
