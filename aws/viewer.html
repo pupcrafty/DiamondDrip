@@ -313,6 +313,27 @@
             }
         }
         
+        function getEmojiForHash(hash, hashToEmoji, hashCounts) {
+            if (!hash || hash === '-') {
+                return '❓';
+            }
+            
+            if (!hashToEmoji.has(hash)) {
+                // Assign a new emoji from a pool
+                const emojis = ['🟢', '🔵', '🟡', '🟠', '🔴', '🟣', '⚫', '⚪', 
+                               '🟤', '🟥', '🟧', '🟨', '🟩', '🟦', '🟪', '⬛', 
+                               '⬜', '🟫', '🔶', '🔷', '🔸', '🔹', '🔺', '🔻',
+                               '💚', '💙', '💛', '🧡', '❤️', '💜', '🖤', '🤍',
+                               '⭐', '🌟', '✨', '💫', '🔥', '💧', '🌊', '🌈'];
+                const emojiIndex = hashToEmoji.size % emojis.length;
+                hashToEmoji.set(hash, emojis[emojiIndex]);
+            }
+            
+            const emoji = hashToEmoji.get(hash);
+            const count = hashCounts.get(hash) || 0;
+            return `${emoji} (${count})`;
+        }
+        
         function displayPredictions(predictions) {
             const container = document.getElementById('tableContainer');
             
@@ -321,11 +342,23 @@
                 return;
             }
             
+            // Count predictions per hash and create emoji mapping
+            const hashCounts = new Map();
+            const hashToEmoji = new Map();
+            
+            predictions.forEach(pred => {
+                const hash = pred.hashed_ip || null;
+                if (hash) {
+                    hashCounts.set(hash, (hashCounts.get(hash) || 0) + 1);
+                }
+            });
+            
             let html = '<table><thead><tr>';
             html += '<th>ID</th>';
             html += '<th>Client Timestamp</th>';
             html += '<th>Server Timestamp</th>';
             html += '<th>BPM</th>';
+            html += '<th>Device</th>';
             html += '<th>BPM History</th>';
             html += '<th>Current Prediction</th>';
             html += '<th>Created At</th>';
@@ -342,6 +375,9 @@
                 html += `<td class="timestamp">${formatTimestamp(pred.client_timestamp)}</td>`;
                 html += `<td class="timestamp">${formatTimestamp(pred.server_timestamp)}</td>`;
                 html += `<td class="bpm">${pred.current_bpm ? pred.current_bpm.toFixed(2) : '-'}</td>`;
+                const deviceHash = pred.hashed_ip || '-';
+                const emojiDisplay = getEmojiForHash(deviceHash, hashToEmoji, hashCounts);
+                html += `<td style="font-size: 18px; text-align: center;" title="Hash: ${escapeHtmlAttr(deviceHash)}">${emojiDisplay}</td>`;
                 if (pred.bpm_history && bpmHistoryJson.length > 50) {
                     html += `<td class="json-field" data-full="${escapeHtmlAttr(bpmHistoryJson)}">${escapeHtml(bpmHistoryShort)}<span class="json-toggle" onclick="toggleJSON(this)"> [show]</span></td>`;
                 } else {
