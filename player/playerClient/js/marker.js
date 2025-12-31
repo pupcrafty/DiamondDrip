@@ -2,10 +2,11 @@
 // Marker class
 // -----------------------------
 class Marker {
-    constructor(target, tSpawn, tArrival, topX, topY, holdDuration, fallVx, fallVy, sustainedDuration = 0, startSide = null, pairedMarker = null) {
+    constructor(target, tSpawn, tArrival, topX, topY, holdDuration, fallVx, fallVy, sustainedDuration = 0, startSide = null, pairedMarker = null, isStartMarker = false) {
         this.target = target;  // Reference to the target this marker is moving toward (destination)
         this.startSide = startSide;  // For sustained beats: reference to the starting side target (left or right) - used for end marker
         this.pairedMarker = pairedMarker;  // For sustained beats: reference to the other marker (start or end)
+        this.isStartMarker = isStartMarker;  // True if this is the start marker of a sustained beat pair
         this.tSpawn = tSpawn;  // Time when marker spawns
         this.tArrival = tArrival;  // Time when marker should arrive at target center
         this.sustainedDuration = sustainedDuration;  // Duration of sustained beat (0 for single beats, not used for new system)

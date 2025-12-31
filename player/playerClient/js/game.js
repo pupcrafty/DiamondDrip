@@ -248,6 +248,7 @@ let targets = [];
 let markers = [];
 let combo = 0;
 let totalScore = 0;  // Global running score total
+let sustainScore = 0;  // Separate score for sustained beats (bonus points)
 let lastResult = "";
 let lastErrMs = 0;
 let celebrationText = null;  // Celebration text to display
@@ -576,12 +577,12 @@ function gameLoop() {
                         // Create start marker (on side, arrives when sustain starts)
                         const startFallVx = (startDx / startDistance) * MARKER_FALL_SPEED;
                         const startFallVy = (startDy / startDistance) * MARKER_FALL_SPEED;
-                        const startMarker = new Marker(startSide, t, startArrivalTime, startTopX, startTopY, startHoldDuration, startFallVx, startFallVy, 0, null, null); // pairedMarker will be set below
+                        const startMarker = new Marker(startSide, t, startArrivalTime, startTopX, startTopY, startHoldDuration, startFallVx, startFallVy, 0, null, null, true); // isStartMarker = true
                         
                         // Create end marker (on middle, arrives when sustain ends)
                         const endFallVx = (endDx / endDistance) * MARKER_FALL_SPEED;
                         const endFallVy = (endDy / endDistance) * MARKER_FALL_SPEED;
-                        const endMarker = new Marker(endTarget, t, endArrivalTime, endTopX, endTopY, endHoldDuration, endFallVx, endFallVy, 0, startSide, null); // startSide stored for color reference
+                        const endMarker = new Marker(endTarget, t, endArrivalTime, endTopX, endTopY, endHoldDuration, endFallVx, endFallVy, 0, startSide, null, false); // isStartMarker = false
                         
                         // Link the markers together
                         startMarker.pairedMarker = endMarker;
@@ -670,31 +671,144 @@ function gameLoop() {
         marker.update(t);
     }
     
-    // Check if sustained beat should end (if marker's sustain period has ended)
-    if (currentlySustainingSide !== null && currentlySustainingSide === 1) {
-        // Check if any middle target markers are still in their sustain window
+    // Check for sustained beat completion and timeouts
+    const sustainedInputsToCleanup = [];
+    const gracePeriod = 0.2; // Grace period in seconds
+    
+    for (const [pairId, sustainInput] of activeSustainedInputs.entries()) {
+        const endMarker = sustainInput.endMarker;
+        const timeSinceEndMarker = t - endMarker.tArrival;
+        
+        // Check if end marker has arrived (within grace period)
+        if (timeSinceEndMarker >= 0 && timeSinceEndMarker <= gracePeriod && !endMarker.hit) {
+            // Check if input is still active based on input type
+            let inputStillActive = false;
+            
+            if (sustainInput.inputType === 'keyboard') {
+                // For keyboard, check if the key is still held
+                if (sustainInput.inputData.key === 'a') {
+                    inputStillActive = leftKeyHeld && leftKeyActiveSustain === pairId;
+                } else if (sustainInput.inputData.key === 'd') {
+                    inputStillActive = rightKeyHeld && rightKeyActiveSustain === pairId;
+                }
+            } else if (sustainInput.inputType === 'mouse') {
+                // For mouse, check if drag is still active
+                inputStillActive = mouseDragActive && mouseDragSustain === pairId;
+            } else if (sustainInput.inputType === 'touch') {
+                // For touch, check if at least one touch is still active
+                const touch1Active = sustainInput.inputData.touchId1 !== undefined && touchPositions.has(sustainInput.inputData.touchId1);
+                const touch2Active = sustainInput.inputData.touchId2 !== undefined && touchPositions.has(sustainInput.inputData.touchId2);
+                inputStillActive = touch1Active || touch2Active;
+            }
+            
+            // If input is still active, complete the sustain
+            if (inputStillActive) {
+                const holdDuration = t - sustainInput.startTime;
+                const expectedDuration = endMarker.tArrival - sustainInput.startMarker.tArrival;
+                
+                // Score the end marker hit
+                const result = endMarker.target.getHitResult(endMarker.x, endMarker.y);
+                if (result === "MISS") {
+                    combo = 0;
+                    log('GAME', '🎮 [GAME] ❌ Sustained beat end MISS (Combo reset)');
+                } else {
+                    combo += 1;
+                    log('GAME', '🎮 [GAME] ✅ Sustained beat completed:', result, '(Combo:', combo, ')');
+                    
+                    const scoreIncrement = result === "OKAY" ? 1 : 
+                                          result === "GOOD" ? 2 : 
+                                          result === "GREAT" ? 3 : 
+                                          result === "PERFECT" ? 5 : 0;
+                    totalScore += scoreIncrement;
+                }
+                
+                // Calculate bonus points for holding duration
+                const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
+                if (hyperBPM && hyperBPM > 0) {
+                    const beatDuration = 60.0 / hyperBPM;
+                    const thirtySecondNoteDuration = beatDuration / 8;
+                    const holdDuration32nd = holdDuration / thirtySecondNoteDuration;
+                    const expectedDuration32nd = expectedDuration / thirtySecondNoteDuration;
+                    
+                    // Bonus: 1 point per additional 32nd beat held (beyond the initial pulse)
+                    const bonus32nd = Math.max(0, Math.floor(holdDuration32nd - 1));
+                    if (bonus32nd > 0) {
+                        sustainScore += bonus32nd;
+                        log('GAME', `🎮 [GAME] 🎯 Sustained beat bonus: ${bonus32nd} points (held for ${holdDuration32nd.toFixed(2)} 32nd beats, Sustain Score: ${sustainScore})`);
+                    }
+                }
+                
+                // Mark end marker as hit
+                endMarker.hit = true;
+                
+                // Set target.hit for visual feedback
+                endMarker.target.hit = true;
+                setTimeout(() => {
+                    endMarker.target.hit = false;
+                }, 200);
+                
+                // Mark for cleanup
+                sustainedInputsToCleanup.push(pairId);
+            }
+        }
+        
+        // If end marker has passed by more than grace period, clean up
+        if (timeSinceEndMarker > gracePeriod) {
+            // Sustained beat timed out - mark as missed
+            if (!endMarker.hit) {
+                endMarker.hit = true;
+                combo = 0;
+                log('GAME', '🎮 [GAME] ❌ Sustained beat timed out (MISS)');
+            }
+            sustainedInputsToCleanup.push(pairId);
+        }
+    }
+    
+    // Clean up timed-out sustained inputs
+    for (const pairId of sustainedInputsToCleanup) {
+        const sustainInput = activeSustainedInputs.get(pairId);
+        if (sustainInput) {
+            // Clean up keyboard tracking
+            if (sustainInput.inputType === 'keyboard') {
+                if (sustainInput.inputData.key === 'a') {
+                    leftKeyHeld = false;
+                    leftKeyActiveSustain = null;
+                } else if (sustainInput.inputData.key === 'd') {
+                    rightKeyHeld = false;
+                    rightKeyActiveSustain = null;
+                }
+            }
+            
+            // Clean up mouse tracking
+            if (sustainInput.inputType === 'mouse') {
+                mouseDragActive = false;
+                mouseDragSustain = null;
+            }
+            
+            // Clean up touch tracking
+            if (sustainInput.inputType === 'touch') {
+                if (sustainInput.inputData.touchId1 !== undefined) {
+                    touchActiveSustains.delete(sustainInput.inputData.touchId1);
+                }
+                if (sustainInput.inputData.touchId2 !== undefined) {
+                    touchActiveSustains.delete(sustainInput.inputData.touchId2);
+                }
+            }
+        }
+        activeSustainedInputs.delete(pairId);
+    }
+    
+    // Update legacy tracking for backward compatibility
+    if (currentlySustainingSide !== null) {
+        // Check if any active sustained inputs are still valid
         let hasActiveSustain = false;
-        for (const marker of markers) {
-            if (marker.target === targets[1] && marker.sustainedDuration > 0 && t < marker.tEnd) {
+        for (const sustainInput of activeSustainedInputs.values()) {
+            if (t < sustainInput.endMarker.tArrival + 0.2) {
                 hasActiveSustain = true;
                 break;
             }
         }
         if (!hasActiveSustain) {
-            // Sustained beat period ended - calculate bonus and end
-            const holdDuration = t - sustainedBeatStartTime;
-            const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
-            if (hyperBPM && hyperBPM > 0 && sustainedBeatDuration > 0) {
-                const beatDuration = 60.0 / hyperBPM;
-                const thirtySecondNoteDuration = beatDuration / 8;
-                const holdDuration32nd = holdDuration / thirtySecondNoteDuration;
-                const bonus32nd = Math.max(0, Math.floor(holdDuration32nd - 1)); // -1 because initial pulse counts as first 32nd
-                const bonusScore = bonus32nd;
-                if (bonusScore > 0) {
-                    totalScore += bonusScore;
-                    log('GAME', `🎮 [GAME] 🎯 Sustained beat bonus: ${bonusScore} points (held for ${holdDuration32nd.toFixed(2)} 32nd beats)`);
-                }
-            }
             currentlySustainingSide = null;
             sustainedBeatStartTime = null;
             sustainedBeatDuration = 0;
@@ -891,7 +1005,7 @@ function gameLoop() {
     // Display hypersmoothed BPM
     const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
     const bpmText = hyperBPM !== null && hyperBPM > 0 ? hyperBPM.toFixed(1) : '---';
-    const info = `BPM: ${bpmText} | Score: ${totalScore} | Combo: ${combo}`;
+    const info = `BPM: ${bpmText} | Score: ${totalScore} | Sustain: ${sustainScore} | Combo: ${combo}`;
     ctx.fillText(info, padding, padding + fontSize1);
     
     if (lastResult) {
@@ -956,7 +1070,8 @@ function gameLoop() {
 // -----------------------------
 
 // Function to handle hitting a target by index (0-7) or by mouse position
-function hitTarget(targetIndex = null, mouseX = null, mouseY = null) {
+// inputTypeHint: 'keyboard' | 'mouse' | 'touch' (optional, for sustained beats)
+function hitTarget(targetIndex = null, mouseX = null, mouseY = null, inputTypeHint = null) {
     const yellowRadius = getYellowRadius();
     let clickedTarget = null;
     
@@ -998,46 +1113,228 @@ function hitTarget(targetIndex = null, mouseX = null, mouseY = null) {
         }
         
         if (nextMarker) {
-            // Score based on marker position
-            const result = clickedTarget.getHitResult(nextMarker.x, nextMarker.y);
-            
-            // Mark this specific marker as hit (not the target, so other markers aren't affected)
-            nextMarker.hit = true;
-            
-            // Set target.hit for visual feedback, but reset it after a short delay
-            clickedTarget.hit = true;
-            setTimeout(() => {
-                clickedTarget.hit = false;
-            }, 200);  // Reset after 200ms
-            
-            if (result === "MISS") {
-                combo = 0;
-                log('GAME', '🎮 [GAME] ❌ Target hit but scored MISS (Combo reset)');
-            } else {
-                combo += 1;
-                log('GAME', '🎮 [GAME] ✅ Target hit:', result, '(Combo:', combo, ')');
+            // Check if this is a sustained beat marker
+            if (nextMarker.isSustainedBeatMarker() && nextMarker.pairedMarker) {
+                // This is a sustained beat - determine if it's the start or end marker
+                const startMarker = nextMarker.tArrival < nextMarker.pairedMarker.tArrival ? nextMarker : nextMarker.pairedMarker;
+                const endMarker = nextMarker.tArrival < nextMarker.pairedMarker.tArrival ? nextMarker.pairedMarker : nextMarker;
                 
-                // Increment global score based on hit result
-                const scoreIncrement = result === "OKAY" ? 1 : 
-                                      result === "GOOD" ? 2 : 
-                                      result === "GREAT" ? 3 : 
-                                      result === "PERFECT" ? 5 : 0;
-                totalScore += scoreIncrement;
-            }
-            
-            lastResult = result;
-            lastErrMs = 0;  // No timing error for position-based scoring
-            
-            // Remove only the specific marker that was hit
-            const markerIndex = markers.indexOf(nextMarker);
-            if (markerIndex !== -1) {
-                markers.splice(markerIndex, 1);
-            }
-            
-            // Remove marker from target's markers array
-            const targetMarkerIndex = clickedTarget.markers.indexOf(nextMarker);
-            if (targetMarkerIndex !== -1) {
-                clickedTarget.markers.splice(targetMarkerIndex, 1);
+                // Check if we're hitting the start marker (on the side)
+                if (nextMarker === startMarker) {
+                    // Start of sustained beat - begin tracking the input
+                    const pairId = `${startMarker.tArrival}_${endMarker.tArrival}`;
+                    const currentTime = now();
+                    
+                    // Determine input type based on how we got here
+                    let inputType = inputTypeHint || 'mouse';
+                    let inputData = {};
+                    
+                    if (targetIndex !== null) {
+                        // Keyboard input
+                        inputType = 'keyboard';
+                        inputData = { key: targetIndex === 0 ? 'a' : 'd' };
+                    } else if (mouseX !== null && mouseY !== null) {
+                        if (inputType === 'touch') {
+                            // Touch input - find which touch is at this position
+                            inputData = { touchId1: undefined, touchId2: undefined, touch1Data: { x: mouseX, y: mouseY }, touch2Data: null };
+                            // Find the touch at this position
+                            for (const [touchId, touchData] of touchPositions.entries()) {
+                                const dx = touchData.x - mouseX;
+                                const dy = touchData.y - mouseY;
+                                const distance = Math.sqrt(dx * dx + dy * dy);
+                                if (distance < 10) { // Within 10 pixels
+                                    inputData.touchId1 = touchId;
+                                    break;
+                                }
+                            }
+                        } else {
+                            // Mouse input
+                            inputType = 'mouse';
+                            inputData = { startX: mouseX, startY: mouseY, currentX: mouseX, currentY: mouseY };
+                        }
+                    }
+                    
+                    // Start tracking this sustained input
+                    activeSustainedInputs.set(pairId, {
+                        startMarker: startMarker,
+                        endMarker: endMarker,
+                        startTime: currentTime,
+                        inputType: inputType,
+                        inputData: inputData
+                    });
+                    
+                    // Mark start marker as hit (but don't remove it yet - we need it for the line)
+                    startMarker.hit = true;
+                    
+                    // Set target.hit for visual feedback
+                    clickedTarget.hit = true;
+                    setTimeout(() => {
+                        clickedTarget.hit = false;
+                    }, 200);
+                    
+                    // Score the initial hit
+                    const result = clickedTarget.getHitResult(startMarker.x, startMarker.y);
+                    if (result === "MISS") {
+                        combo = 0;
+                        log('GAME', '🎮 [GAME] ❌ Sustained beat start MISS (Combo reset)');
+                    } else {
+                        combo += 1;
+                        log('GAME', '🎮 [GAME] ✅ Sustained beat started:', result, '(Combo:', combo, ')');
+                        
+                        const scoreIncrement = result === "OKAY" ? 1 : 
+                                              result === "GOOD" ? 2 : 
+                                              result === "GREAT" ? 3 : 
+                                              result === "PERFECT" ? 5 : 0;
+                        totalScore += scoreIncrement;
+                    }
+                    
+                    lastResult = result;
+                    
+                    // Update tracking for keyboard
+                    if (inputType === 'keyboard') {
+                        if (inputData.key === 'a') {
+                            leftKeyHeld = true;
+                            leftKeyActiveSustain = pairId;
+                        } else if (inputData.key === 'd') {
+                            rightKeyHeld = true;
+                            rightKeyActiveSustain = pairId;
+                        }
+                    }
+                    
+                    // Update tracking for mouse
+                    if (inputType === 'mouse') {
+                        mouseDragActive = true;
+                        mouseDragSustain = pairId;
+                        mouseDragStartX = mouseX;
+                        mouseDragStartY = mouseY;
+                    }
+                    
+                    // Update tracking for touch
+                    if (inputType === 'touch' && inputData.touchId1 !== undefined) {
+                        touchActiveSustains.set(inputData.touchId1, pairId);
+                    }
+                    
+                    // Block same-side pulses during this sustain
+                    const startSideIndex = startMarker.target === targets[0] ? 0 : 2;
+                    currentlySustainingSide = startSideIndex;
+                    sustainedBeatStartTime = currentTime;
+                    
+                    // Calculate expected duration
+                    const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
+                    if (hyperBPM && hyperBPM > 0) {
+                        const beatDuration = 60.0 / hyperBPM;
+                        sustainedBeatDuration = endMarker.tArrival - startMarker.tArrival;
+                        sustainedBeatDuration32nd = sustainedBeatDuration / (beatDuration / 8);
+                    }
+                } else {
+                    // This is the end marker - check if we've been holding the sustain
+                    const pairId = `${startMarker.tArrival}_${endMarker.tArrival}`;
+                    const sustainInput = activeSustainedInputs.get(pairId);
+                    
+                    if (sustainInput) {
+                        // We've been holding the sustain - complete it
+                        const holdDuration = now() - sustainInput.startTime;
+                        const expectedDuration = endMarker.tArrival - startMarker.tArrival;
+                        
+                        // Score the end marker hit
+                        const result = clickedTarget.getHitResult(endMarker.x, endMarker.y);
+                        if (result === "MISS") {
+                            combo = 0;
+                            log('GAME', '🎮 [GAME] ❌ Sustained beat end MISS (Combo reset)');
+                        } else {
+                            combo += 1;
+                            log('GAME', '🎮 [GAME] ✅ Sustained beat completed:', result, '(Combo:', combo, ')');
+                            
+                            const scoreIncrement = result === "OKAY" ? 1 : 
+                                                  result === "GOOD" ? 2 : 
+                                                  result === "GREAT" ? 3 : 
+                                                  result === "PERFECT" ? 5 : 0;
+                            totalScore += scoreIncrement;
+                        }
+                        
+                        // Calculate bonus points for holding duration
+                        const hyperBPM = BPM_ESTIMATOR.getHyperSmoothedBPM();
+                        if (hyperBPM && hyperBPM > 0) {
+                            const beatDuration = 60.0 / hyperBPM;
+                            const thirtySecondNoteDuration = beatDuration / 8;
+                            const holdDuration32nd = holdDuration / thirtySecondNoteDuration;
+                            const expectedDuration32nd = expectedDuration / thirtySecondNoteDuration;
+                            
+                            // Bonus: 1 point per additional 32nd beat held (beyond the initial pulse)
+                            const bonus32nd = Math.max(0, Math.floor(holdDuration32nd - 1));
+                            if (bonus32nd > 0) {
+                                sustainScore += bonus32nd;
+                                log('GAME', `🎮 [GAME] 🎯 Sustained beat bonus: ${bonus32nd} points (held for ${holdDuration32nd.toFixed(2)} 32nd beats, Sustain Score: ${sustainScore})`);
+                            }
+                        }
+                        
+                        // Mark end marker as hit
+                        endMarker.hit = true;
+                        
+                        // Set target.hit for visual feedback
+                        clickedTarget.hit = true;
+                        setTimeout(() => {
+                            clickedTarget.hit = false;
+                        }, 200);
+                        
+                        // Clean up tracking
+                        activeSustainedInputs.delete(pairId);
+                        
+                        if (sustainInput.inputType === 'keyboard') {
+                            if (sustainInput.inputData.key === 'a') {
+                                leftKeyHeld = false;
+                                leftKeyActiveSustain = null;
+                            } else if (sustainInput.inputData.key === 'd') {
+                                rightKeyHeld = false;
+                                rightKeyActiveSustain = null;
+                            }
+                        }
+                        
+                        if (sustainInput.inputType === 'mouse') {
+                            mouseDragActive = false;
+                            mouseDragSustain = null;
+                        }
+                        
+                        currentlySustainingSide = null;
+                        sustainedBeatStartTime = null;
+                        sustainedBeatDuration = 0;
+                        sustainedBeatDuration32nd = 0;
+                    } else {
+                        // We didn't hold the sustain - treat as a miss
+                        combo = 0;
+                        lastResult = "MISS";
+                        log('GAME', '🎮 [GAME] ❌ Sustained beat end hit without holding (MISS)');
+                    }
+                }
+            } else {
+                // Normal single beat marker
+                const result = clickedTarget.getHitResult(nextMarker.x, nextMarker.y);
+                
+                // Mark this specific marker as hit
+                nextMarker.hit = true;
+                
+                // Set target.hit for visual feedback
+                clickedTarget.hit = true;
+                setTimeout(() => {
+                    clickedTarget.hit = false;
+                }, 200);
+                
+                if (result === "MISS") {
+                    combo = 0;
+                    log('GAME', '🎮 [GAME] ❌ Target hit but scored MISS (Combo reset)');
+                } else {
+                    combo += 1;
+                    log('GAME', '🎮 [GAME] ✅ Target hit:', result, '(Combo:', combo, ')');
+                    
+                    const scoreIncrement = result === "OKAY" ? 1 : 
+                                          result === "GOOD" ? 2 : 
+                                          result === "GREAT" ? 3 : 
+                                          result === "PERFECT" ? 5 : 0;
+                    totalScore += scoreIncrement;
+                }
+                
+                lastResult = result;
+                lastErrMs = 0;
             }
         } else {
             // Miss - target clicked but no marker available
@@ -1063,94 +1360,273 @@ function getCanvasPosition(event) {
     return [x, y];
 }
 
-// Mouse click handler
-canvas.addEventListener('click', (event) => {
+// Mouse handlers for sustained beats (click and drag)
+canvas.addEventListener('mousedown', (event) => {
     const [mouseX, mouseY] = getCanvasPosition(event);
     hitTarget(null, mouseX, mouseY);
 });
 
-// Touch event handlers for touchscreen support
+canvas.addEventListener('mousemove', (event) => {
+    if (mouseDragActive && mouseDragSustain !== null) {
+        const [mouseX, mouseY] = getCanvasPosition(event);
+        const sustainInput = activeSustainedInputs.get(mouseDragSustain);
+        if (sustainInput) {
+            // Update current position for drag tracking
+            sustainInput.inputData.currentX = mouseX;
+            sustainInput.inputData.currentY = mouseY;
+            
+            // Check if we're dragging toward the middle target
+            const middleTarget = targets[1];
+            const dx = mouseX - middleTarget.x;
+            const dy = mouseY - middleTarget.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const yellowRadius = getYellowRadius();
+            
+            // If we're near the middle target and the end marker has arrived, complete the sustain
+            if (distance <= yellowRadius && now() >= sustainInput.endMarker.tArrival) {
+                hitTarget(null, mouseX, mouseY);
+            }
+        }
+    }
+});
+
+canvas.addEventListener('mouseup', (event) => {
+    if (mouseDragActive && mouseDragSustain !== null) {
+        const [mouseX, mouseY] = getCanvasPosition(event);
+        const sustainInput = activeSustainedInputs.get(mouseDragSustain);
+        if (sustainInput) {
+            // Check if we're releasing on the middle target
+            const middleTarget = targets[1];
+            const dx = mouseX - middleTarget.x;
+            const dy = mouseY - middleTarget.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            const yellowRadius = getYellowRadius();
+            
+            if (distance <= yellowRadius && now() >= sustainInput.endMarker.tArrival) {
+                // Complete the sustain
+                hitTarget(null, mouseX, mouseY);
+            }
+        }
+        mouseDragActive = false;
+        mouseDragSustain = null;
+    }
+});
+
+// Touch event handlers for sustained beats (2-finger support)
 canvas.addEventListener('touchstart', (event) => {
-    event.preventDefault(); // Prevent default touch behavior (scrolling, etc.)
-    const [touchX, touchY] = getCanvasPosition(event);
-    hitTarget(null, touchX, touchY);
+    event.preventDefault();
+    const currentTime = now();
+    
+    // Process all touches
+    for (let i = 0; i < event.touches.length; i++) {
+        const touch = event.touches[i];
+        const [touchX, touchY] = getCanvasPosition(touch);
+        
+        // Find which target this touch is near
+        const yellowRadius = getYellowRadius();
+        let targetIndex = null;
+        for (let j = 0; j < targets.length; j++) {
+            const target = targets[j];
+            const dx = touchX - target.x;
+            const dy = touchY - target.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            if (distance <= yellowRadius) {
+                targetIndex = j;
+                break;
+            }
+        }
+        
+        // Store touch position
+        touchPositions.set(touch.identifier, {
+            x: touchX,
+            y: touchY,
+            targetIndex: targetIndex
+        });
+        
+        // If this is a side target (0 or 2), try to hit it (might be start of sustained beat)
+        if (targetIndex === 0 || targetIndex === 2) {
+            hitTarget(null, touchX, touchY, 'touch');
+        } else if (targetIndex === 1) {
+            // Middle target - check if this is completing a sustained beat
+            // Look for active sustained inputs that need a second touch
+            for (const [pairId, sustainInput] of activeSustainedInputs.entries()) {
+                if (sustainInput.inputType === 'touch' && 
+                    sustainInput.inputData.touchId1 !== undefined &&
+                    sustainInput.inputData.touchId2 === undefined &&
+                    currentTime >= sustainInput.endMarker.tArrival) {
+                    // This is the second touch for a two-finger sustain
+                    sustainInput.inputData.touchId2 = touch.identifier;
+                    sustainInput.inputData.touch2Data = { x: touchX, y: touchY };
+                    touchActiveSustains.set(touch.identifier, pairId);
+                    // Complete the sustain
+                    hitTarget(null, touchX, touchY);
+                    break;
+                }
+            }
+        }
+    }
+});
+
+canvas.addEventListener('touchmove', (event) => {
+    event.preventDefault();
+    
+    // Update touch positions
+    for (let i = 0; i < event.touches.length; i++) {
+        const touch = event.touches[i];
+        const [touchX, touchY] = getCanvasPosition(touch);
+        
+        const touchData = touchPositions.get(touch.identifier);
+        if (touchData) {
+            touchData.x = touchX;
+            touchData.y = touchY;
+            
+            // Check if this touch is part of an active sustain
+            const sustainId = touchActiveSustains.get(touch.identifier);
+            if (sustainId) {
+                const sustainInput = activeSustainedInputs.get(sustainId);
+                if (sustainInput) {
+                    // Update touch data in sustain input
+                    if (sustainInput.inputData.touchId1 === touch.identifier) {
+                        sustainInput.inputData.touch1Data = { x: touchX, y: touchY };
+                    } else if (sustainInput.inputData.touchId2 === touch.identifier) {
+                        sustainInput.inputData.touch2Data = { x: touchX, y: touchY };
+                    }
+                    
+                    // Check if we're near the middle target and end marker has arrived
+                    const middleTarget = targets[1];
+                    const dx = touchX - middleTarget.x;
+                    const dy = touchY - middleTarget.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    const yellowRadius = getYellowRadius();
+                    
+                    if (distance <= yellowRadius && now() >= sustainInput.endMarker.tArrival) {
+                        hitTarget(null, touchX, touchY);
+                    }
+                }
+            }
+        }
+    }
 });
 
 canvas.addEventListener('touchend', (event) => {
-    event.preventDefault(); // Prevent default touch behavior
+    event.preventDefault();
+    
+    // Clean up ended touches
+    for (let i = 0; i < event.changedTouches.length; i++) {
+        const touch = event.changedTouches[i];
+        const touchId = touch.identifier;
+        
+        // Check if this touch was part of a sustain
+        const sustainId = touchActiveSustains.get(touchId);
+        if (sustainId) {
+            const sustainInput = activeSustainedInputs.get(sustainId);
+            if (sustainInput) {
+                const [touchX, touchY] = getCanvasPosition(touch);
+                
+                // Check if we're releasing on the middle target
+                const middleTarget = targets[1];
+                const dx = touchX - middleTarget.x;
+                const dy = touchY - middleTarget.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const yellowRadius = getYellowRadius();
+                
+                if (distance <= yellowRadius && now() >= sustainInput.endMarker.tArrival) {
+                    hitTarget(null, touchX, touchY);
+                }
+            }
+            
+            touchActiveSustains.delete(touchId);
+        }
+        
+        touchPositions.delete(touchId);
+    }
 });
 
-// Track sustained press state for middle button
-// Track sustained input state
-let middleButtonHeld = false;
-let middleButtonHoldStartTime = null;
-let middleButtonCheckInterval = null;
-let leftButtonHeld = false;
-let rightButtonHeld = false;
-let mouseDragging = false;
-let mouseDragStartTarget = null;
-let touchDragPositions = new Map(); // Track touch positions for 2-finger support: Map<touchId, {targetIndex, startTime, startX, startY}>
-let currentlySustainingSide = null; // null, 0 (left), 1 (middle), or 2 (right) - tracks which side is currently sustaining
-let sustainedBeatStartTime = null; // When the current sustained beat started
-let sustainedBeatDuration = 0; // Duration of the current sustained beat
-let sustainedBeatDuration32nd = 0; // Duration in 32nd beats
+// Track sustained beat input state
+let activeSustainedInputs = new Map(); // Map<markerPairId, {startMarker, endMarker, startTime, inputType, inputData}>
+// inputType: 'keyboard' | 'mouse' | 'touch'
+// inputData: {key: 'a'|'d'} | {startX, startY, currentX, currentY} | {touchId1, touchId2, touch1Data, touch2Data}
 
-// Keyboard handler for 3-button system
-// Left (0): A or ArrowLeft - single beat
-// Middle (1): S or Space - sustained press
-// Right (2): D or ArrowRight - single beat
+// Track keyboard state for sustained beats
+let leftKeyHeld = false;
+let rightKeyHeld = false;
+let leftKeyActiveSustain = null; // markerPairId if left key is holding a sustain
+let rightKeyActiveSustain = null; // markerPairId if right key is holding a sustain
+
+// Track mouse drag state for sustained beats
+let mouseDragActive = false;
+let mouseDragSustain = null; // markerPairId if mouse is dragging a sustain
+let mouseDragStartX = null;
+let mouseDragStartY = null;
+
+// Track touch state for sustained beats (2-finger support)
+let touchActiveSustains = new Map(); // Map<touchId, markerPairId>
+let touchPositions = new Map(); // Map<touchId, {x, y, targetIndex}>
+
+// Legacy variables (for backward compatibility, may be removed later)
+let currentlySustainingSide = null;
+let sustainedBeatStartTime = null;
+let sustainedBeatDuration = 0;
+let sustainedBeatDuration32nd = 0;
+
+// Keyboard handler for sustained beats
+// Left (0): A or ArrowLeft - can be single beat or start of sustained beat
+// Right (2): D or ArrowRight - can be single beat or start of sustained beat
 window.addEventListener('keydown', (event) => {
-    let targetIndex = null;
-    let isSustainedButton = false;
-    
-    // Handle keys (case insensitive)
     const key = event.key.toLowerCase();
-    if (key === 'a' || event.code === 'ArrowLeft') {
-        targetIndex = 0; // Left - single beat
-    } else if (key === 's' || event.code === 'Space') {
-        targetIndex = 1; // Middle - sustained press
-        isSustainedButton = true;
-        event.preventDefault(); // Prevent space from scrolling page
-    } else if (key === 'd' || event.code === 'ArrowRight') {
-        targetIndex = 2; // Right - single beat
-    }
+    let targetIndex = null;
     
-    if (targetIndex !== null) {
-        if (isSustainedButton && !middleButtonHeld) {
-            // Start sustained press for middle button
-            middleButtonHeld = true;
-            middleButtonHoldStartTime = now();
-            
-            // Hit immediately on press
+    if (key === 'a' || event.code === 'ArrowLeft') {
+        targetIndex = 0; // Left
+        if (!leftKeyHeld) {
+            leftKeyHeld = true;
             hitTarget(targetIndex);
-            
-            // Set up interval to check for hits while held (check every 50ms)
-            middleButtonCheckInterval = setInterval(() => {
-                if (middleButtonHeld) {
-                    hitTarget(targetIndex);
-                } else {
-                    clearInterval(middleButtonCheckInterval);
-                    middleButtonCheckInterval = null;
-                }
-            }, 50);
-        } else if (!isSustainedButton) {
-            // Single beat buttons - hit once on keydown
+        }
+    } else if (key === 'd' || event.code === 'ArrowRight') {
+        targetIndex = 2; // Right
+        if (!rightKeyHeld) {
+            rightKeyHeld = true;
             hitTarget(targetIndex);
         }
     }
 });
 
-// Handle keyup for sustained button release
+// Handle keyup for sustained beats
 window.addEventListener('keyup', (event) => {
     const key = event.key.toLowerCase();
-    if ((key === 's' || event.code === 'Space') && middleButtonHeld) {
-        // Release sustained press
-        event.preventDefault(); // Prevent space from scrolling page
-        middleButtonHeld = false;
-        middleButtonHoldStartTime = null;
-        if (middleButtonCheckInterval) {
-            clearInterval(middleButtonCheckInterval);
-            middleButtonCheckInterval = null;
+    
+    if (key === 'a' || event.code === 'ArrowLeft') {
+        if (leftKeyHeld) {
+            leftKeyHeld = false;
+            // If we're holding a sustained beat, check if we should complete it
+            if (leftKeyActiveSustain !== null) {
+                const sustainInput = activeSustainedInputs.get(leftKeyActiveSustain);
+                if (sustainInput) {
+                    const currentTime = now();
+                    // If we've passed the end marker arrival time, the sustain should already be completed
+                    // Otherwise, we're releasing early (which is fine - the end marker will handle scoring)
+                    // Just clean up the tracking
+                    if (currentTime < sustainInput.endMarker.tArrival) {
+                        // Released early - will be handled when end marker arrives or times out
+                    }
+                }
+                leftKeyActiveSustain = null;
+            }
+        }
+    } else if (key === 'd' || event.code === 'ArrowRight') {
+        if (rightKeyHeld) {
+            rightKeyHeld = false;
+            // Same logic as left key
+            if (rightKeyActiveSustain !== null) {
+                const sustainInput = activeSustainedInputs.get(rightKeyActiveSustain);
+                if (sustainInput) {
+                    const currentTime = now();
+                    if (currentTime < sustainInput.endMarker.tArrival) {
+                        // Released early
+                    }
+                }
+                rightKeyActiveSustain = null;
+            }
         }
     }
 });
