@@ -2,6 +2,34 @@
 // Prediction Selection and Accuracy Tracking
 // -----------------------------
 
+// Server prediction state (currently not used, but kept for potential future use)
+let serverPrediction = null;
+let serverOffsetEstimate = 0; // Estimated offset between client and server time
+
+// Server prediction management functions
+function isServerPredictionReady() {
+    // Currently returns false since we're using client-side predictions
+    // Can be implemented in the future if server predictions are needed
+    return serverPrediction !== null;
+}
+
+function getServerPrediction() {
+    // Returns the current server prediction, or null if not available
+    return serverPrediction;
+}
+
+function setServerPrediction(prediction) {
+    // Store a server prediction (for future use)
+    serverPrediction = prediction;
+}
+
+function convertServerTimeToLocal(serverTimeMs) {
+    // Convert server time to local time using offset estimate
+    // For now, just return the server time as-is (no offset correction)
+    // Can be enhanced in the future to use serverOffsetEstimate
+    return serverTimeMs;
+}
+
 // Prediction accuracy tracking
 let predictionAccuracyTracker = {
     serverAccuracy: 0.5, // Initial: assume 50% accuracy

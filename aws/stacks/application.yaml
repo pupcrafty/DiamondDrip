@@ -147,6 +147,13 @@ Resources:
       RouteKey: 'GET /recent'
       Target: !Sub 'integrations/${ApiIntegration}'
   
+  ApiRouteSources:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /sources'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  
   ApiRouteHealth:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -166,6 +173,28 @@ Resources:
     Properties:
       ApiId: !Ref ApiGateway
       RouteKey: 'POST /predict_phrase'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  
+  # Debug endpoints for prediction visualizer
+  ApiRouteDebugState:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /prediction/debug/state'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  
+  ApiRouteDebugPipeline:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /prediction/debug/pipeline'
+      Target: !Sub 'integrations/${ApiIntegration}'
+  
+  ApiRouteDebugHistory:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: 'GET /prediction/debug/history'
       Target: !Sub 'integrations/${ApiIntegration}'
   
   # API Gateway Stage

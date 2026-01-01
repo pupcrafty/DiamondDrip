@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prediction Engine Visualizer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
+            color: #e0e0e0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #ffffff;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            color: #b0b0b0;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+
+        .server-config {
+            background: rgba(40, 40, 55, 0.8);
+            border: 1px solid rgba(100, 100, 120, 0.3);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .server-config h2 {
+            color: #ffffff;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+            border-bottom: 2px solid rgba(100, 150, 255, 0.5);
+            padding-bottom: 8px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .refresh-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(30, 30, 45, 0.6);
+            padding: 8px 15px;
+            border-radius: 6px;
+            border: 1px solid rgba(100, 100, 120, 0.3);
+        }
+
+        .refresh-control label {
+            color: #b0c4ff;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+
+        .refresh-dial {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .dial-button {
+            background: rgba(100, 150, 255, 0.3);
+            border: 1px solid rgba(100, 150, 255, 0.5);
+            color: #b0c4ff;
+            width: 32px;
+            height: 32px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1.2em;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .dial-button:hover {
+            background: rgba(100, 150, 255, 0.5);
+            transform: scale(1.1);
+        }
+
+        .dial-button:active {
+            transform: scale(0.95);
+        }
+
+        .dial-value {
+            min-width: 50px;
+            text-align: center;
+            font-family: 'Courier New', monospace;
+            font-size: 1.1em;
+            color: #ffffff;
+            font-weight: bold;
+        }
+
+        .url-input {
+            flex: 1;
+            min-width: 300px;
+            padding: 12px;
+            background: #1a1a2e;
+            border: 1px solid rgba(100, 100, 120, 0.3);
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        .button:active {
+            transform: translateY(0);
+        }
+
+        .button:disabled {
+            background: #555;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .button.secondary {
+            background: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-indicator.active {
+            background: #51cf66;
+            box-shadow: 0 0 8px #51cf66;
+        }
+
+        .status-indicator.inactive {
+            background: #888;
+        }
+
+        .status-indicator.error {
+            background: #ff6b6b;
+            box-shadow: 0 0 8px #ff6b6b;
+        }
+
+        .panels-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .panel {
+            background: rgba(40, 40, 55, 0.8);
+            border: 1px solid rgba(100, 100, 120, 0.3);
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .panel h3 {
+            color: #ffffff;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            border-bottom: 2px solid rgba(100, 150, 255, 0.5);
+            padding-bottom: 8px;
+        }
+
+        .panel-content {
+            color: #b0b0b0;
+            font-size: 0.9em;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .data-table th,
+        .data-table td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid rgba(100, 100, 120, 0.2);
+        }
+
+        .data-table th {
+            color: #b0c4ff;
+            font-weight: bold;
+        }
+
+        .data-table td {
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+        }
+
+        .grid-visualization {
+            background: #1a1a2e;
+            border: 1px solid rgba(100, 100, 120, 0.3);
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 10px;
+            overflow-x: auto;
+        }
+
+        .grid-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2px;
+        }
+
+        .grid-slot {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+            background: rgba(100, 100, 120, 0.3);
+            transition: all 0.2s;
+        }
+
+        .grid-slot.onset {
+            background: #51cf66;
+            box-shadow: 0 0 4px #51cf66;
+        }
+
+        .grid-slot.hold {
+            background: #64b4ff;
+        }
+
+        .grid-slot.confidence-high {
+            border: 1px solid #51cf66;
+        }
+
+        .grid-slot.confidence-medium {
+            border: 1px solid #ffd93d;
+        }
+
+        .grid-slot.confidence-low {
+            border: 1px solid #888;
+        }
+
+        .value-display {
+            display: inline-block;
+            padding: 4px 8px;
+            background: rgba(100, 150, 255, 0.2);
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            margin: 2px;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 200px;
+            margin-top: 15px;
+        }
+
+        .error-message {
+            background: rgba(255, 107, 107, 0.2);
+            border: 1px solid rgba(255, 107, 107, 0.5);
+            color: #ff6b6b;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+
+        .loading {
+            color: #64b4ff;
+            font-style: italic;
+        }
+
+        .collapsible {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .collapsible::before {
+            content: '▼ ';
+            display: inline-block;
+            transition: transform 0.3s;
+        }
+
+        .collapsible.collapsed::before {
+            transform: rotate(-90deg);
+        }
+
+        .collapsible-content {
+            max-height: 1000px;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+
+        .collapsible-content.collapsed {
+            max-height: 0;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔬 Prediction Engine Visualizer</h1>
+        <p class="subtitle">Real-time visualization of prediction engine state and pipeline</p>
+
+        <div class="server-config">
+            <h2>Configuration</h2>
+            <div class="controls">
+                <input type="text" id="serverUrl" class="url-input" value="https://localhost:8444" placeholder="https://localhost:8444">
+                <button class="button" id="refreshBtn">🔄 Refresh</button>
+                <button class="button secondary" id="autoRefreshBtn">⏸️ Auto-Refresh</button>
+                <div class="refresh-control">
+                    <label>Refresh Rate:</label>
+                    <div class="refresh-dial">
+                        <button class="dial-button" id="decreaseRateBtn">−</button>
+                        <span class="dial-value" id="refreshRateValue">2</span>
+                        <span style="color: #888; font-size: 0.9em;">sec</span>
+                        <button class="dial-button" id="increaseRateBtn">+</button>
+                    </div>
+                </div>
+                <span id="statusIndicator" class="status-indicator inactive"></span>
+                <span id="statusText">Not connected</span>
+            </div>
+        </div>
+
+        <div class="panels-grid">
+            <!-- Engine Mode & Status -->
+            <div class="panel">
+                <h3>Engine Status</h3>
+                <div class="panel-content" id="engineStatus">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+
+            <!-- Clock Sync -->
+            <div class="panel">
+                <h3 class="collapsible" onclick="toggleCollapse(this)">Clock Synchronization</h3>
+                <div class="collapsible-content" id="clockSyncContent">
+                    <div class="panel-content" id="clockSync">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Event Fusion -->
+            <div class="panel">
+                <h3 class="collapsible" onclick="toggleCollapse(this)">Event Fusion</h3>
+                <div class="collapsible-content" id="eventFusionContent">
+                    <div class="panel-content" id="eventFusion">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tempo Tracker -->
+            <div class="panel">
+                <h3 class="collapsible" onclick="toggleCollapse(this)">Tempo Tracker</h3>
+                <div class="collapsible-content" id="tempoTrackerContent">
+                    <div class="panel-content" id="tempoTracker">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Grid Encoder -->
+            <div class="panel" style="grid-column: 1 / -1;">
+                <h3 class="collapsible" onclick="toggleCollapse(this)">Grid Encoder History (256 slots)</h3>
+                <div class="collapsible-content" id="gridEncoderContent">
+                    <div class="panel-content" id="gridEncoder">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bootstrap Predictor -->
+            <div class="panel" style="grid-column: 1 / -1;">
+                <h3 class="collapsible" onclick="toggleCollapse(this)">Bootstrap Predictor (32-slot priors)</h3>
+                <div class="collapsible-content" id="bootstrapPredictorContent">
+                    <div class="panel-content" id="bootstrapPredictor">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval = null;
+        let autoRefreshEnabled = false;
+        let refreshRateSeconds = 2; // Default 2 seconds
+
+        function getServerUrl() {
+            return document.getElementById('serverUrl').value.trim();
+        }
+
+        function updateStatusIndicator(status) {
+            const indicator = document.getElementById('statusIndicator');
+            const text = document.getElementById('statusText');
+            indicator.className = 'status-indicator ' + status;
+            if (status === 'active') {
+                text.textContent = 'Connected';
+            } else if (status === 'error') {
+                text.textContent = 'Error';
+            } else {
+                text.textContent = 'Not connected';
+            }
+        }
+
+        function toggleCollapse(element) {
+            element.classList.toggle('collapsed');
+            const content = element.nextElementSibling;
+            content.classList.toggle('collapsed');
+        }
+
+        function renderEngineStatus(data) {
+            const container = document.getElementById('engineStatus');
+            if (!data) {
+                container.innerHTML = '<div class="error-message">No data available</div>';
+                return;
+            }
+
+            const mode = data.mode || 'unknown';
+            const bpm = data.bpm !== null && data.bpm !== undefined ? data.bpm.toFixed(2) : 'N/A';
+            const lastUpdate = data.last_update_time ? new Date(data.last_update_time).toLocaleTimeString() : 'N/A';
+
+            container.innerHTML = `
+                <div>
+                    <strong>Mode:</strong> <span class="value-display">${mode}</span><br>
+                    <strong>BPM:</strong> <span class="value-display">${bpm}</span><br>
+                    <strong>Beat Duration:</strong> <span class="value-display">${data.beat_ms?.toFixed(2) || 'N/A'} ms</span><br>
+                    <strong>Slot Duration:</strong> <span class="value-display">${data.slot_ms?.toFixed(2) || 'N/A'} ms</span><br>
+                    <strong>Last Beat:</strong> <span class="value-display">${data.t_last_beat ? new Date(data.t_last_beat).toLocaleTimeString() : 'N/A'}</span><br>
+                    <strong>Last Update:</strong> <span class="value-display">${lastUpdate}</span><br>
+                    <strong>Devices:</strong> <span class="value-display">${data.num_devices || 0}</span><br>
+                    <strong>Canonical Events:</strong> <span class="value-display">${data.num_canonical_events || 0}</span>
+                </div>
+            `;
+        }
+
+        function renderClockSync(data) {
+            const container = document.getElementById('clockSync');
+            if (!data || !data.clock_sync || Object.keys(data.clock_sync).length === 0) {
+                container.innerHTML = '<div>No devices synchronized</div>';
+                return;
+            }
+
+            let html = '<table class="data-table"><thead><tr><th>Device</th><th>Offset (ms)</th><th>Drift</th><th>History</th></tr></thead><tbody>';
+            for (const [deviceId, info] of Object.entries(data.clock_sync)) {
+                html += `<tr>
+                    <td>${deviceId}</td>
+                    <td>${info.offset_ms.toFixed(2)}</td>
+                    <td>${info.drift.toFixed(6)}</td>
+                    <td>${info.history_count}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        function renderEventFusion(data) {
+            const container = document.getElementById('eventFusion');
+            if (!data || !data.event_fusion) {
+                container.innerHTML = '<div class="error-message">No event fusion data</div>';
+                return;
+            }
+
+            const ef = data.event_fusion;
+            const events = ef.recent_canonical_events || [];
+            
+            let html = `
+                <div>
+                    <strong>Window:</strong> <span class="value-display">${ef.window_ms.toFixed(1)} ms</span><br>
+                    <strong>Active Clusters:</strong> <span class="value-display">${ef.active_clusters}</span><br>
+                    <strong>Recent Events:</strong> <span class="value-display">${events.length}</span>
+                </div>
+            `;
+
+            if (events.length > 0) {
+                html += '<table class="data-table" style="margin-top: 10px;"><thead><tr><th>Time (ms)</th><th>Duration</th><th>Confidence</th><th>Spread</th><th>Contributors</th></tr></thead><tbody>';
+                events.slice(-10).forEach(event => {
+                    html += `<tr>
+                        <td>${event.t_server_ms.toFixed(1)}</td>
+                        <td>${event.dur_ms.toFixed(1)}</td>
+                        <td>${event.conf}</td>
+                        <td>${event.spread_ms.toFixed(2)}</td>
+                        <td>${event.contributors.join(', ')}</td>
+                    </tr>`;
+                });
+                html += '</tbody></table>';
+            }
+
+            container.innerHTML = html;
+        }
+
+        function renderTempoTracker(data) {
+            const container = document.getElementById('tempoTracker');
+            if (!data || !data.tempo_tracker) {
+                container.innerHTML = '<div class="error-message">No tempo tracker data</div>';
+                return;
+            }
+
+            const tt = data.tempo_tracker;
+            container.innerHTML = `
+                <div>
+                    <strong>BPM:</strong> <span class="value-display">${tt.bpm?.toFixed(2) || 'N/A'}</span><br>
+                    <strong>Beat Duration:</strong> <span class="value-display">${tt.beat_ms.toFixed(2)} ms</span><br>
+                    <strong>Slot Duration:</strong> <span class="value-display">${tt.slot_ms.toFixed(2)} ms</span><br>
+                    <strong>Last Beat:</strong> <span class="value-display">${tt.t_last_beat ? new Date(tt.t_last_beat).toLocaleTimeString() : 'N/A'}</span><br>
+                    <strong>Phase Gain:</strong> <span class="value-display">${tt.phase_gain.toFixed(3)}</span><br>
+                    <strong>Tempo Gain:</strong> <span class="value-display">${tt.tempo_gain.toFixed(6)}</span>
+                </div>
+            `;
+        }
+
+        function renderGridEncoder(data) {
+            const container = document.getElementById('gridEncoder');
+            if (!data || !data.grid_encoder) {
+                container.innerHTML = '<div class="error-message">No grid encoder data</div>';
+                return;
+            }
+
+            const ge = data.grid_encoder;
+            const onset = ge.hist_onset || [];
+            const hold = ge.hist_hold || [];
+            const conf = ge.hist_conf || [];
+
+            let html = `
+                <div style="margin-bottom: 10px;">
+                    <strong>History Beats:</strong> <span class="value-display">${ge.history_beats}</span>
+                    <strong>History Slots:</strong> <span class="value-display">${ge.history_slots}</span>
+                    <strong>Start Time:</strong> <span class="value-display">${ge.hist_start_time ? new Date(ge.hist_start_time).toLocaleTimeString() : 'N/A'}</span>
+                </div>
+            `;
+
+            html += '<div class="grid-visualization"><div class="grid-container">';
+            for (let i = 0; i < Math.min(onset.length, 256); i++) {
+                const classes = ['grid-slot'];
+                if (onset[i] > 0.5) classes.push('onset');
+                if (hold[i] > 0.5) classes.push('hold');
+                
+                const confidence = conf[i] || 0;
+                if (confidence > 0.7) classes.push('confidence-high');
+                else if (confidence > 0.3) classes.push('confidence-medium');
+                else classes.push('confidence-low');
+
+                html += `<div class="${classes.join(' ')}" title="Slot ${i}: onset=${onset[i]}, hold=${hold[i]}, conf=${confidence.toFixed(2)}"></div>`;
+            }
+            html += '</div></div>';
+
+            container.innerHTML = html;
+        }
+
+        function renderBootstrapPredictor(data) {
+            const container = document.getElementById('bootstrapPredictor');
+            if (!data || !data.bootstrap_predictor) {
+                container.innerHTML = '<div>Bootstrap predictor not available (not in bootstrap mode)</div>';
+                return;
+            }
+
+            const bp = data.bootstrap_predictor;
+            if (!bp.ready) {
+                container.innerHTML = '<div>Bootstrap predictor not ready (insufficient data)</div>';
+                return;
+            }
+
+            const pOnset = bp.p_onset || [];
+            const durSlots = bp.median_dur_slots || [];
+            const confidence = bp.confidence || [];
+
+            let html = `
+                <div style="margin-bottom: 10px;">
+                    <strong>Ready:</strong> <span class="value-display">${bp.ready ? 'Yes' : 'No'}</span>
+                    <strong>Sample Count:</strong> <span class="value-display">${bp.sample_count || 0}</span>
+                </div>
+            `;
+
+            html += '<div class="grid-visualization"><div class="grid-container">';
+            for (let i = 0; i < Math.min(pOnset.length, 32); i++) {
+                const classes = ['grid-slot'];
+                if (pOnset[i] > 0.5) classes.push('onset');
+                
+                const conf = confidence[i] || 0;
+                if (conf > 0.7) classes.push('confidence-high');
+                else if (conf > 0.3) classes.push('confidence-medium');
+                else classes.push('confidence-low');
+
+                html += `<div class="${classes.join(' ')}" title="Slot ${i}: prob=${pOnset[i].toFixed(2)}, dur=${durSlots[i] || 0}, conf=${conf.toFixed(2)}"></div>`;
+            }
+            html += '</div></div>';
+
+            html += '<table class="data-table" style="margin-top: 15px;"><thead><tr><th>Slot</th><th>Onset Prob</th><th>Duration</th><th>Confidence</th></tr></thead><tbody>';
+            for (let i = 0; i < Math.min(pOnset.length, 32); i++) {
+                html += `<tr>
+                    <td>${i}</td>
+                    <td>${pOnset[i].toFixed(3)}</td>
+                    <td>${durSlots[i] || 0}</td>
+                    <td>${(confidence[i] || 0).toFixed(3)}</td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+
+            container.innerHTML = html;
+        }
+
+        function buildApiUrl(endpoint) {
+            const baseUrl = getServerUrl();
+            // Remove trailing slash
+            const cleanBase = baseUrl.replace(/\/$/, '');
+            
+            // Check if it's an API Gateway URL (contains execute-api)
+            if (cleanBase.includes('execute-api')) {
+                // API Gateway URLs need the stage prefix
+                // Check if stage is already in the URL
+                const hasStage = /\/production$|\/dev$|\/staging$|\/test$/.test(cleanBase);
+                if (hasStage) {
+                    // Stage already present, just append endpoint
+                    return `${cleanBase}${endpoint}`;
+                } else {
+                    // No stage, add /production as default
+                    return `${cleanBase}/production${endpoint}`;
+                }
+            } else {
+                // Local server or other, just append endpoint
+                return `${cleanBase}${endpoint}`;
+            }
+        }
+
+        async function fetchEngineState() {
+            const url = buildApiUrl('/prediction/debug/state');
+
+            try {
+                updateStatusIndicator('active');
+                const response = await fetch(url);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+
+                if (data.status === 'success' && data.engine_state) {
+                    const state = data.engine_state;
+                    renderEngineStatus(state);
+                    renderClockSync(state);
+                    renderEventFusion(state);
+                    renderTempoTracker(state);
+                    renderGridEncoder(state);
+                    renderBootstrapPredictor(state);
+                } else {
+                    throw new Error(data.message || 'Unknown error');
+                }
+            } catch (error) {
+                updateStatusIndicator('error');
+                console.error('Error fetching engine state:', error);
+                document.getElementById('engineStatus').innerHTML = 
+                    `<div class="error-message">Error: ${error.message}</div>`;
+            }
+        }
+
+        function updateRefreshRateDisplay() {
+            document.getElementById('refreshRateValue').textContent = refreshRateSeconds;
+        }
+
+        function setRefreshRate(seconds) {
+            // Clamp between 1 and 30 seconds
+            refreshRateSeconds = Math.max(1, Math.min(30, seconds));
+            updateRefreshRateDisplay();
+            
+            // If auto-refresh is enabled, restart it with new rate
+            if (autoRefreshEnabled) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = setInterval(fetchEngineState, refreshRateSeconds * 1000);
+            }
+        }
+
+        function increaseRefreshRate() {
+            setRefreshRate(refreshRateSeconds + 1);
+        }
+
+        function decreaseRefreshRate() {
+            setRefreshRate(refreshRateSeconds - 1);
+        }
+
+        function toggleAutoRefresh() {
+            const btn = document.getElementById('autoRefreshBtn');
+            if (autoRefreshEnabled) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+                autoRefreshEnabled = false;
+                btn.textContent = '▶️ Auto-Refresh';
+                updateStatusIndicator('inactive');
+            } else {
+                autoRefreshInterval = setInterval(fetchEngineState, refreshRateSeconds * 1000);
+                autoRefreshEnabled = true;
+                btn.textContent = '⏸️ Auto-Refresh';
+                fetchEngineState(); // Immediate fetch
+            }
+        }
+
+        // Event listeners
+        document.getElementById('refreshBtn').addEventListener('click', fetchEngineState);
+        document.getElementById('autoRefreshBtn').addEventListener('click', toggleAutoRefresh);
+        document.getElementById('increaseRateBtn').addEventListener('click', increaseRefreshRate);
+        document.getElementById('decreaseRateBtn').addEventListener('click', decreaseRefreshRate);
+        
+        // Initialize refresh rate display
+        updateRefreshRateDisplay();
+
+        // Auto-update server URL if page is loaded from IP
+        window.addEventListener('load', () => {
+            const hostname = window.location.hostname;
+            if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+                const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+                if (ipPattern.test(hostname)) {
+                    const serverUrlInput = document.getElementById('serverUrl');
+                    if (serverUrlInput.value.includes('localhost')) {
+                        serverUrlInput.value = serverUrlInput.value.replace(/localhost/g, hostname);
+                    }
+                }
+            }
+            // Initial fetch
+            fetchEngineState();
+        });
+    </script>
+</body>
+</html>
+

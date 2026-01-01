@@ -249,13 +249,32 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         elif path == '/' or path == '/health':
             return handle_health_check()
         
+        # Debug endpoints for prediction visualizer
+        elif path == '/prediction/debug/state':
+            if http_method == 'GET':
+                return handle_debug_state()
+            else:
+                return create_response(405, {'error': 'Method not allowed'})
+        
+        elif path == '/prediction/debug/pipeline' or path.startswith('/prediction/debug/pipeline'):
+            if http_method == 'GET':
+                return handle_debug_pipeline(event)
+            else:
+                return create_response(405, {'error': 'Method not allowed'})
+        
+        elif path == '/prediction/debug/history' or path.startswith('/prediction/debug/history'):
+            if http_method == 'GET':
+                return handle_debug_history(event)
+            else:
+                return create_response(405, {'error': 'Method not allowed'})
+        
         else:
             # Return 404 with debug info
             return create_response(404, {
                 'error': 'Not found',
                 'path': path,
                 'method': http_method,
-                'available_paths': ['/prediction', '/predict_phrase', '/stats', '/recent', '/health', '/']
+                'available_paths': ['/prediction', '/predict_phrase', '/stats', '/recent', '/health', '/', '/prediction/debug/state', '/prediction/debug/pipeline', '/prediction/debug/history']
             })
     
     except Exception as e:
@@ -708,6 +727,103 @@ def extract_device_info(user_agent: str) -> tuple:
         browser = 'unknown'
     
     return device_type, browser
+
+def handle_debug_state() -> Dict[str, Any]:
+    """Handle GET /prediction/debug/state requests"""
+    if not PREDICTION_ENGINE_AVAILABLE:
+        return create_response(503, {
+            'status': 'error',
+            'message': 'Prediction engine not available'
+        })
+    
+    api = get_prediction_api()
+    if api is None:
+        return create_response(503, {
+            'status': 'error',
+            'message': 'Prediction API not initialized'
+        })
+    
+    try:
+        result = api.handle_debug_state()
+        status_code = 200 if result.get('status') == 'success' else 500
+        return create_response(status_code, result)
+    except Exception as e:
+        return create_response(500, {
+            'status': 'error',
+            'message': str(e)
+        })
+
+def handle_debug_pipeline(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle GET /prediction/debug/pipeline requests"""
+    if not PREDICTION_ENGINE_AVAILABLE:
+        return create_response(503, {
+            'status': 'error',
+            'message': 'Prediction engine not available'
+        })
+    
+    api = get_prediction_api()
+    if api is None:
+        return create_response(503, {
+            'status': 'error',
+            'message': 'Prediction API not initialized'
+        })
+    
+    try:
+        # Parse query parameters
+        limit = 10
+        query_params = event.get('queryStringParameters') or {}
+        if query_params:
+            limit_param = query_params.get('limit')
+            if limit_param:
+                try:
+                    limit = int(limit_param)
+                except ValueError:
+                    pass
+        
+        result = api.handle_pipeline_trace(limit=limit)
+        status_code = 200 if result.get('status') == 'success' else 500
+        return create_response(status_code, result)
+    except Exception as e:
+        return create_response(500, {
+            'status': 'error',
+            'message': str(e)
+        })
+
+def handle_debug_history(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle GET /prediction/debug/history requests"""
+    if not PREDICTION_ENGINE_AVAILABLE:
+        return create_response(503, {
+            'status': 'error',
+            'message': 'Prediction engine not available'
+        })
+    
+    api = get_prediction_api()
+    if api is None:
+        return create_response(503, {
+            'status': 'error',
+            'message': 'Prediction API not initialized'
+        })
+    
+    try:
+        # Parse query parameters
+        limit = 10
+        query_params = event.get('queryStringParameters') or {}
+        if query_params:
+            limit_param = query_params.get('limit')
+            if limit_param:
+                try:
+                    limit = int(limit_param)
+                except ValueError:
+                    pass
+        
+        result = api.handle_prediction_history(limit=limit)
+        status_code = 200 if result.get('status') == 'success' else 500
+        return create_response(status_code, result)
+    except Exception as e:
+        return create_response(500, {
+            'status': 'error',
+            'message': str(e)
+        })
 
 def create_response(status_code: int, body: Any, headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Create a standardized API Gateway response"""

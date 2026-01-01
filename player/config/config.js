@@ -93,5 +93,37 @@ const ENABLE_PATTERN_VISUALIZER = true;  // Set to true to enable the beat patte
 // -----------------------------
 // Logging Configuration
 // -----------------------------
-// Logger is now in logger.js - LOG_CONFIG is available globally after logger.js is loaded
+// Enable/disable specific log categories
+// Set to true to enable, false to disable
+const LOG_CONFIG = {
+    // Core game logging
+    'GAME': true,
+    
+    // Beat detection logging
+    'BEAT': true,
+    'BEAT_DIAGNOSTIC': false,  // Detailed diagnostic info (can be verbose)
+    
+    // BPM calculation logging
+    'BPM': true,
+    
+    // Prediction logging
+    'PREDICTION_INIT': true,
+    'PREDICTION_HYPER': true,
+    'PULSE_PATTERN': true,
+    
+    // Sustained beat detection
+    'SUSTAINED': true,
+    
+    // Integration/system logging
+    'INTEGRATION': true,
+    
+    // Default: if a category is not specified, it will be enabled
+    // Set ENABLE_ALL_LOGGING to false to reverse this behavior
+    'ENABLE_ALL_LOGGING': true
+};
+
+// Make LOG_CONFIG available globally so logger.js can access it
+if (typeof window !== 'undefined') {
+    window.LOG_CONFIG = LOG_CONFIG;
+}
 

@@ -461,7 +461,7 @@ class PredictionDatabase:
         """Get all sources with their emojis
         
         Returns:
-            List of source dictionaries with id, hashed_ip, emoji
+            List of source dictionaries with id, hashed_ip, emoji, created_at (as ISO string)
         """
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -470,7 +470,18 @@ class PredictionDatabase:
                     FROM sources
                     ORDER BY created_at ASC
                 ''')
-                return [dict(row) for row in cursor.fetchall()]
+                sources = []
+                for row in cursor.fetchall():
+                    source_dict = dict(row)
+                    # Convert datetime to ISO format string for JSON serialization
+                    if 'created_at' in source_dict and source_dict['created_at']:
+                        if isinstance(source_dict['created_at'], datetime):
+                            source_dict['created_at'] = source_dict['created_at'].isoformat()
+                        elif isinstance(source_dict['created_at'], str):
+                            # Already a string, keep as-is
+                            pass
+                    sources.append(source_dict)
+                return sources
     
     def insert_pulse_timestamps(self, pulses: List[Tuple[int, float, datetime, Optional[int]]]) -> int:
         """Insert pulse timestamps into the database

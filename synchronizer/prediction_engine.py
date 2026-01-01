@@ -445,10 +445,23 @@ class PredictionEngine:
         
         self.last_update_time = None
         self.lock = threading.Lock()
+        
+        # Pipeline tracing (for debugging)
+        self.pipeline_traces: deque = deque(maxlen=100)  # Keep last 100 traces
+        self.trace_enabled = False
     
     def set_bootstrap_predictor(self, bootstrap_predictor):
         """Set bootstrap predictor for bootstrap mode"""
         self.bootstrap_predictor = bootstrap_predictor
+    
+    def enable_tracing(self, enabled: bool = True):
+        """Enable or disable pipeline tracing"""
+        self.trace_enabled = enabled
+    
+    def get_pipeline_traces(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent pipeline traces"""
+        with self.lock:
+            return list(self.pipeline_traces)[-limit:]
     
     def process_pulse(self, pulse: PulseEvent, server_time_ms: Optional[float] = None) -> Optional[CanonicalEvent]:
         """
@@ -638,12 +651,71 @@ class PredictionEngine:
     def get_state(self) -> Dict[str, Any]:
         """Get current engine state for debugging"""
         with self.lock:
+            # Get clock sync state
+            clock_sync_state = {}
+            for device_id, offset in self.clock_sync.offsets.items():
+                drift = self.clock_sync.drifts.get(device_id, 1.0)
+                history = self.clock_sync.offset_history.get(device_id, deque())
+                clock_sync_state[device_id] = {
+                    'offset_ms': float(offset),
+                    'drift': float(drift),
+                    'history_count': len(history)
+                }
+            
+            # Get recent canonical events (last 20)
+            recent_canonical = list(self.event_fusion.canonical_events)[-20:]
+            canonical_events_data = []
+            for event in recent_canonical:
+                canonical_events_data.append({
+                    't_server_ms': float(event.t_server_ms),
+                    'dur_ms': float(event.dur_ms),
+                    'conf': int(event.conf),
+                    'spread_ms': float(event.spread_ms),
+                    'contributors': event.contributors
+                })
+            
+            # Get grid encoder state
+            hist_onset, hist_hold, hist_conf = self.grid_encoder.get_history_arrays()
+            
+            # Get predictor state
+            predictor_state = {
+                'type': 'deterministic',
+                'threshold': float(self.predictor.threshold),
+                'pattern_ema_length': len(self.predictor.pattern_ema) if self.predictor.pattern_ema is not None else 0,
+                'duration_patterns_count': len(self.predictor.dur_patterns)
+            }
+            
             return {
-                'bpm': self.tempo_tracker.bpm,
-                'beat_ms': self.tempo_tracker.beat_ms,
-                't_last_beat': self.tempo_tracker.t_last_beat,
+                'mode': self.mode.value,
+                'bpm': float(self.tempo_tracker.bpm) if self.tempo_tracker.bpm else None,
+                'beat_ms': float(self.tempo_tracker.beat_ms),
+                't_last_beat': float(self.tempo_tracker.t_last_beat) if self.tempo_tracker.t_last_beat else None,
+                'slot_ms': float(self.tempo_tracker.get_slot_ms()),
                 'num_canonical_events': len(self.event_fusion.canonical_events),
                 'num_devices': len(self.clock_sync.offsets),
-                'last_update_time': self.last_update_time
+                'last_update_time': float(self.last_update_time) if self.last_update_time else None,
+                'clock_sync': clock_sync_state,
+                'event_fusion': {
+                    'window_ms': float(self.event_fusion.window_ms),
+                    'active_clusters': len(self.event_fusion.clusters),
+                    'recent_canonical_events': canonical_events_data
+                },
+                'tempo_tracker': {
+                    'bpm': float(self.tempo_tracker.bpm) if self.tempo_tracker.bpm else None,
+                    'beat_ms': float(self.tempo_tracker.beat_ms),
+                    't_last_beat': float(self.tempo_tracker.t_last_beat) if self.tempo_tracker.t_last_beat else None,
+                    'slot_ms': float(self.tempo_tracker.get_slot_ms()),
+                    'phase_gain': float(self.tempo_tracker.phase_gain),
+                    'tempo_gain': float(self.tempo_tracker.tempo_gain)
+                },
+                'grid_encoder': {
+                    'history_beats': self.grid_encoder.history_beats,
+                    'history_slots': self.grid_encoder.history_slots,
+                    'hist_start_time': float(self.grid_encoder.hist_start_time) if self.grid_encoder.hist_start_time else None,
+                    'hist_onset': hist_onset,
+                    'hist_hold': hist_hold,
+                    'hist_conf': hist_conf
+                },
+                'predictor': predictor_state
             }
 

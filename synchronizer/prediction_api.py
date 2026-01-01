@@ -169,9 +169,10 @@ class PredictionAPI:
             
             # 1. INGEST: Store batched data to database
             print(f"[API] Step 1: Ingesting data to database...")
+            record_id = None
             if self.database:
-                self._ingest_batched_data(request_data, received_at_server_ms)
-            print(f"[API] Step 1: Complete")
+                record_id = self._ingest_batched_data(request_data, received_at_server_ms)
+            print(f"[API] Step 1: Complete (record_id={record_id})")
             
             # 2. UPDATE PREDICTOR STATE
             print(f"[API] Step 2: Updating predictor state...")
@@ -217,6 +218,24 @@ class PredictionAPI:
                     "message": "Not enough data for prediction"
                 }
             
+            # 4. STORE: Update database record with prediction result
+            if self.database and record_id is not None:
+                try:
+                    # Convert onset (128-element array) to boolean pattern for storage
+                    # The onset array contains 0s and 1s, we need to convert to boolean
+                    current_prediction = [bool(x) for x in phrase.onset] if phrase.onset else None
+                    current_prediction_durations = phrase.dur_slots if phrase.dur_slots else None
+                    
+                    self.database.update_prediction(
+                        prediction_id=record_id,
+                        current_prediction=current_prediction,
+                        current_prediction_durations=current_prediction_durations
+                    )
+                    print(f"[API] Step 4: Stored prediction result to database (record_id={record_id})")
+                except Exception as e:
+                    print(f"[API] Warning: Failed to store prediction result: {e}")
+                    # Don't fail the request if DB update fails
+            
             # Convert to JSON-serializable format
             print(f"[API] Returning success response for sequence_id: {sequence_id}")
             return {
@@ -259,11 +278,99 @@ class PredictionAPI:
         
         return response
     
-    def _ingest_batched_data(self, request_data: Dict[str, Any], received_at_server_ms: float):
-        """Ingest batched data from /predict_phrase request into database"""
+    def handle_debug_state(self) -> Dict[str, Any]:
+        """Get detailed engine state for debugging/visualization"""
+        try:
+            state = self.engine.get_state()
+            
+            # Add bootstrap predictor state if available
+            if self.mode == PredictionMode.BOOTSTRAP and self.slot_prior_model:
+                bootstrap_state = {
+                    "ready": self.slot_prior_model.is_ready(),
+                    "sample_count": self.slot_prior_model.sample_count
+                }
+                if self.slot_prior_model.is_ready():
+                    bootstrap_state["p_onset"] = [float(x) for x in self.slot_prior_model.p_onset] if self.slot_prior_model.p_onset is not None else []
+                    bootstrap_state["median_dur_slots"] = [int(x) for x in self.slot_prior_model.median_dur_slots] if self.slot_prior_model.median_dur_slots is not None else []
+                    bootstrap_state["confidence"] = [float(x) for x in self.slot_prior_model.confidence] if self.slot_prior_model.confidence is not None else []
+                state["bootstrap_predictor"] = bootstrap_state
+            else:
+                state["bootstrap_predictor"] = None
+            
+            return {
+                "status": "success",
+                "engine_state": state
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+    
+    def handle_pipeline_trace(self, limit: int = 10) -> Dict[str, Any]:
+        """Get recent pipeline traces"""
+        try:
+            traces = self.engine.get_pipeline_traces(limit=limit)
+            return {
+                "status": "success",
+                "traces": traces
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+    
+    def handle_prediction_history(self, limit: int = 10) -> Dict[str, Any]:
+        """Get recent prediction history with context"""
         try:
             if not self.database:
-                return
+                return {
+                    "status": "error",
+                    "message": "Database not available"
+                }
+            
+            # Get recent predictions from database
+            records = self.database.get_recent_predictions(limit=limit)
+            
+            predictions = []
+            for record in records:
+                # Parse JSON fields
+                bpm_history = json.loads(record.get('bpm_history', '[]')) if isinstance(record.get('bpm_history'), str) else record.get('bpm_history', [])
+                patterns = json.loads(record.get('recent_pulse_patterns', '[]')) if isinstance(record.get('recent_pulse_patterns'), str) else record.get('recent_pulse_patterns', [])
+                
+                predictions.append({
+                    "id": record.get('id'),
+                    "timestamp": record.get('created_at'),
+                    "input": {
+                        "bpm": record.get('current_bpm'),
+                        "bpm_history_count": len(bpm_history) if bpm_history else 0,
+                        "pattern_count": len(patterns) if patterns else 0
+                    },
+                    "output": {
+                        "avg_bpm": record.get('current_bpm')
+                    }
+                })
+            
+            return {
+                "status": "success",
+                "predictions": predictions
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+    
+    def _ingest_batched_data(self, request_data: Dict[str, Any], received_at_server_ms: float):
+        """Ingest batched data from /predict_phrase request into database
+        
+        Returns:
+            int: The database record ID, or None if database not available or insert failed
+        """
+        try:
+            if not self.database:
+                return None
             
             # Extract device/session info
             device_id = request_data.get('device_id', 'unknown')
@@ -288,16 +395,19 @@ class PredictionAPI:
             client_timestamp = datetime.fromtimestamp(received_at_server_ms / 1000.0).isoformat()
             server_timestamp = datetime.fromtimestamp(received_at_server_ms / 1000.0).isoformat()
             
-            self.database.insert_prediction(
+            record_id = self.database.insert_prediction(
                 client_timestamp=client_timestamp,
                 server_timestamp=server_timestamp,
                 data=data,
                 hashed_ip=hashed_ip
             )
             
+            return record_id
+            
         except Exception as e:
             print(f"[API] Error ingesting batched data: {e}")
             # Don't fail the request if DB write fails
+            return None
     
     def _load_priors_from_db(self, limit: int = 10000, hours: int = 24):
         """Load slot priors from recent database records"""

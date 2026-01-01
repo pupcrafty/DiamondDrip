@@ -416,7 +416,15 @@
         async function fetchSources() {
             try {
                 const response = await fetch(`${API_BASE}/sources`);
-                if (!response.ok) throw new Error('Failed to fetch sources');
+                if (!response.ok) {
+                    // If endpoint doesn't exist (404) or server error, use cache
+                    if (response.status === 404) {
+                        console.warn('[Viewer] /sources endpoint not found - using cached sources if available');
+                    } else {
+                        console.warn(`[Viewer] Failed to fetch sources: ${response.status} ${response.statusText}`);
+                    }
+                    return sourcesCache;
+                }
                 const sources = await response.json();
                 sourcesCache.clear();
                 sources.forEach(source => {
@@ -427,7 +435,11 @@
                 });
                 return sourcesCache;
             } catch (error) {
-                console.error('Error fetching sources:', error);
+                // Network errors or CORS errors - use cache silently
+                // Only log if cache is empty (first load)
+                if (sourcesCache.size === 0) {
+                    console.warn('[Viewer] Could not fetch sources (endpoint may not be configured):', error.message);
+                }
                 return sourcesCache;
             }
         }

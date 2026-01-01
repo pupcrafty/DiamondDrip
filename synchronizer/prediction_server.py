@@ -257,10 +257,36 @@ class PredictionDatabase:
         finally:
             conn.close()
     
+    def _normalize_pattern_array(self, pattern):
+        """Normalize pattern array from 0/1 numbers to boolean values for viewer compatibility"""
+        if pattern is None:
+            return None
+        if isinstance(pattern, list):
+            # Convert each element: 0/1 numbers -> False/True, keep booleans as-is
+            return [bool(x) if isinstance(x, (int, float)) else x for x in pattern]
+        return pattern
+    
+    def _normalize_pattern_arrays(self, patterns):
+        """Normalize array of pattern arrays from 0/1 numbers to boolean values"""
+        if patterns is None:
+            return None
+        if isinstance(patterns, list):
+            return [self._normalize_pattern_array(p) for p in patterns]
+        return patterns
+    
     def insert_prediction(self, client_timestamp, server_timestamp, data, hashed_ip=None):
-        """Insert a prediction record into the database"""
+        """Insert a prediction record into the database
+        
+        Normalizes pattern arrays from 0/1 numbers to boolean values for viewer compatibility.
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            
+            # Normalize pattern arrays: convert 0/1 to False/True for viewer compatibility
+            current_prediction = self._normalize_pattern_array(data.get('currentPrediction'))
+            recent_pulse_patterns = self._normalize_pattern_arrays(data.get('recentPulsePatterns', []))
+            recent_correct_prediction_parts = self._normalize_pattern_arrays(data.get('recentCorrectPredictionParts', []))
+            
             cursor.execute('''
                 INSERT INTO predictions (
                     client_timestamp, server_timestamp, current_bpm,
@@ -273,16 +299,33 @@ class PredictionDatabase:
                 server_timestamp,
                 data.get('currentBPM'),
                 json.dumps(data.get('bpmHistory', [])),
-                json.dumps(data.get('recentPulsePatterns', [])),
+                json.dumps(recent_pulse_patterns) if recent_pulse_patterns else json.dumps([]),
                 json.dumps(data.get('recentPulseDurations')) if data.get('recentPulseDurations') is not None else None,
-                json.dumps(data.get('recentCorrectPredictionParts', [])),
+                json.dumps(recent_correct_prediction_parts) if recent_correct_prediction_parts else json.dumps([]),
                 json.dumps(data.get('recentCorrectPredictionDurations')) if data.get('recentCorrectPredictionDurations') is not None else None,
-                json.dumps(data.get('currentPrediction')),
+                json.dumps(current_prediction) if current_prediction is not None else None,
                 json.dumps(data.get('currentPredictionDurations')) if data.get('currentPredictionDurations') is not None else None,
                 hashed_ip
             ))
             conn.commit()
             return cursor.lastrowid
+    
+    def update_prediction(self, prediction_id, current_prediction, current_prediction_durations):
+        """Update a prediction record with the prediction result"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE predictions
+                SET current_prediction = ?,
+                    current_prediction_durations = ?
+                WHERE id = ?
+            ''', (
+                json.dumps(current_prediction) if current_prediction is not None else None,
+                json.dumps(current_prediction_durations) if current_prediction_durations is not None else None,
+                prediction_id
+            ))
+            conn.commit()
+            return cursor.rowcount > 0
     
     def get_recent_predictions(self, limit=100):
         """Get recent predictions from the database"""
@@ -407,6 +450,28 @@ class PredictionDatabase:
             source_id = cursor.lastrowid
             print(f"Created new source: ID={source_id}, hash={hashed_ip[:16]}..., emoji={emoji}")
             return source_id
+    
+    def get_all_sources(self):
+        """Get all sources with their emojis"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, hashed_ip, emoji, created_at
+                FROM sources
+                ORDER BY created_at DESC
+            ''')
+            sources = []
+            for row in cursor.fetchall():
+                source_dict = dict(row)
+                # Convert datetime to ISO format string for JSON serialization
+                if 'created_at' in source_dict and source_dict['created_at']:
+                    if isinstance(source_dict['created_at'], datetime):
+                        source_dict['created_at'] = source_dict['created_at'].isoformat()
+                    elif isinstance(source_dict['created_at'], str):
+                        # Already a string, keep as-is
+                        pass
+                sources.append(source_dict)
+            return sources
     
     def insert_pulse_timestamps(self, pulses):
         """Insert pulse timestamps into the database
@@ -825,6 +890,128 @@ class PredictionRequestHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 response = {'status': 'error', 'message': 'Database not initialized'}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+        
+        elif self.path == '/sources' or self.path == '/sources/':
+            # Return all sources with emojis
+            if db is not None:
+                try:
+                    sources = db.get_all_sources()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(sources, indent=2).encode('utf-8'))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    response = {'status': 'error', 'message': str(e)}
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+            else:
+                self.send_response(503)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                response = {'status': 'error', 'message': 'Database not initialized'}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+        
+        # Debug endpoints for prediction visualizer
+        elif self.path == '/prediction/debug/state' or self.path == '/prediction/debug/state/':
+            global prediction_api
+            if prediction_api:
+                try:
+                    response = prediction_api.handle_debug_state()
+                    status_code = 200 if response.get('status') == 'success' else 500
+                    self.send_response(status_code)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(response, indent=2).encode('utf-8'))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    response = {'status': 'error', 'message': str(e)}
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+            else:
+                self.send_response(503)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                response = {'status': 'error', 'message': 'Prediction engine not initialized'}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+        
+        elif self.path == '/prediction/debug/pipeline' or self.path.startswith('/prediction/debug/pipeline?'):
+            global prediction_api
+            limit = 10
+            if '?' in self.path:
+                try:
+                    query_params = parse_qs(urlparse(self.path).query)
+                    if 'limit' in query_params:
+                        limit = int(query_params['limit'][0])
+                except (ValueError, KeyError):
+                    pass
+            
+            if prediction_api:
+                try:
+                    response = prediction_api.handle_pipeline_trace(limit=limit)
+                    status_code = 200 if response.get('status') == 'success' else 500
+                    self.send_response(status_code)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(response, indent=2).encode('utf-8'))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    response = {'status': 'error', 'message': str(e)}
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+            else:
+                self.send_response(503)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                response = {'status': 'error', 'message': 'Prediction engine not initialized'}
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+        
+        elif self.path == '/prediction/debug/history' or self.path.startswith('/prediction/debug/history?'):
+            global prediction_api
+            limit = 10
+            if '?' in self.path:
+                try:
+                    query_params = parse_qs(urlparse(self.path).query)
+                    if 'limit' in query_params:
+                        limit = int(query_params['limit'][0])
+                except (ValueError, KeyError):
+                    pass
+            
+            if prediction_api:
+                try:
+                    response = prediction_api.handle_prediction_history(limit=limit)
+                    status_code = 200 if response.get('status') == 'success' else 500
+                    self.send_response(status_code)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(response, indent=2).encode('utf-8'))
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    response = {'status': 'error', 'message': str(e)}
+                    self.wfile.write(json.dumps(response).encode('utf-8'))
+            else:
+                self.send_response(503)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                response = {'status': 'error', 'message': 'Prediction engine not initialized'}
                 self.wfile.write(json.dumps(response).encode('utf-8'))
         else:
             # 404 for other paths

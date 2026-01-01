@@ -895,6 +895,7 @@ Examples:
                 print(f"   - https://{diagnostics_url}/detectorTest.html")
                 print(f"   - https://{diagnostics_url}/predictionCallDiagnostic.html")
                 print(f"   - https://{diagnostics_url}/backend-diagnostic.html")
+                print(f"   - https://{diagnostics_url}/prediction-visualizer.html")
                 print(f"   - https://{diagnostics_url}/simpleDetectorTest.html")
                 print(f"   - https://{diagnostics_url}/legacyDetectorTest.html")
                 print(f"   - https://{diagnostics_url}/microphoneInfo.html")

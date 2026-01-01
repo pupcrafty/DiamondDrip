@@ -539,6 +539,63 @@ const RHYTHM_PREDICTOR = (function() {
             log('PREDICTION_HYPER', '🌟 [HYPER PREDICTION] First hyper prediction generated (combined from both sources)');
             hasLoggedHyperPrediction = true;
         }
+        
+        // Send prediction data to the /prediction endpoint for storage in the prediction engine
+        // This helps the prediction engine learn from client-side predictions
+        if (typeof window !== 'undefined' && window.PREDICTION_API && window.BPM_ESTIMATOR) {
+            const currentBPM = window.BPM_ESTIMATOR.getHyperSmoothedBPM();
+            if (currentBPM !== null && currentBPM > 0) {
+                // Get the current prediction (prefer hyper prediction, fall back to regular prediction)
+                const currentPrediction = hyperPredictedPhrasePattern !== null 
+                    ? hyperPredictedPhrasePattern 
+                    : (predictedPhrasePattern !== null ? predictedPhrasePattern : null);
+                
+                if (currentPrediction !== null) {
+                    // Convert boolean array to number array (0 or 1) for the API
+                    const predictionArray = currentPrediction.map(slot => slot ? 1 : 0);
+                    
+                    // Get current prediction durations (prefer hyper prediction durations, fall back to regular)
+                    const currentPredictionDurations = hyperPredictedPhraseDurations !== null
+                        ? hyperPredictedPhraseDurations
+                        : (predictedPhraseDurations !== null ? predictedPhraseDurations : null);
+                    
+                    // Get BPM history
+                    const bpmHistory = window.BPM_ESTIMATOR.getHyperSmoothedBPMHistory() || [currentBPM];
+                    
+                    // Get recent pulse patterns (convert boolean arrays to number arrays)
+                    const recentPulsePatterns = phrasePatterns.slice(-Math.min(10, phrasePatterns.length))
+                        .map(pattern => pattern.map(slot => slot ? 1 : 0));
+                    
+                    // Get recent pulse durations (parallel to recentPulsePatterns)
+                    const recentPulseDurations = phraseDurations.slice(-Math.min(10, phraseDurations.length))
+                        .map(durations => durations ? [...durations] : null);
+                    
+                    // Get recent correct prediction parts (convert boolean arrays to number arrays)
+                    const recentCorrectPredictionParts = correctPredictionPatterns.slice(-Math.min(10, correctPredictionPatterns.length))
+                        .map(pattern => pattern.map(slot => slot ? 1 : 0));
+                    
+                    // Get recent correct prediction durations (parallel to recentCorrectPredictionParts)
+                    const recentCorrectPredictionDurations = correctPredictionDurations.slice(-Math.min(10, correctPredictionDurations.length))
+                        .map(durations => durations ? [...durations] : null);
+                    
+                    // Prepare data for the /prediction endpoint
+                    const predictionData = {
+                        currentBPM: currentBPM,
+                        bpmHistory: bpmHistory.length > 0 ? bpmHistory : [currentBPM],
+                        recentPulsePatterns: recentPulsePatterns,
+                        recentPulseDurations: recentPulseDurations.length > 0 ? recentPulseDurations : undefined,
+                        recentCorrectPredictionParts: recentCorrectPredictionParts,
+                        recentCorrectPredictionDurations: recentCorrectPredictionDurations.length > 0 ? recentCorrectPredictionDurations : undefined,
+                        currentPrediction: predictionArray,
+                        currentPredictionDurations: currentPredictionDurations,
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    // Send to prediction endpoint asynchronously (don't wait for response)
+                    window.PREDICTION_API.sendPredictionData(predictionData);
+                }
+            }
+        }
     }
 
     // Public API

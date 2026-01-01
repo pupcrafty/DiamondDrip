@@ -236,3 +236,5 @@ class GameLoopOutline {
 // Create global instance
 const GAME_LOOP_OUTLINE = new GameLoopOutline();
 
+
+

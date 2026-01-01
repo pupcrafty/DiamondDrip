@@ -1,1 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backend API Diagnostic</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
+            color: #e0e0e0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #ffffff;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            color: #b0b0b0;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+
+        .server-config {
+            background: rgba(40, 40, 55, 0.8);
+            border: 1px solid rgba(100, 100, 120, 0.3);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .server-config h2 {
+            color: #ffffff;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+            border-bottom: 2px solid rgba(100, 150, 255, 0.5);
+            padding-bottom: 8px;
+        }
+
+        .url-input {
+            width: 100%;
+            padding: 12px;
+            background: #1a1a2e;
+            border: 1px solid rgba(100, 100, 120, 0.3);
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+
+        .endpoints-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .endpoint-card {
+            background: rgba(40, 40, 55, 0.8);
+            border: 1px solid rgba(100, 100, 120, 0.3);
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .endpoint-card h3 {
+            color: #ffffff;
+            margin-bottom: 10px;
+            font-size: 1.2em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .method-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .method-badge.get {
+            background: rgba(81, 207, 102, 0.3);
+            color: #51cf66;
+        }
+
+        .method-badge.post {
+            background: rgba(100, 180, 255, 0.3);
+            color: #64b4ff;
+        }
+
+        .endpoint-path {
+            font-family: 'Courier New', monospace;
+            color: #b0c4ff;
+            font-size: 0.9em;
+            margin-bottom: 15px;
+        }
+
+        .payload-input {
+            width: 100%;
+            min-height: 200px;
+            padding: 12px;
+            background: #1a1a2e;
+            border: 1px solid rgba(100, 100, 120, 0.3);
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            resize: vertical;
+            margin-bottom: 10px;
+        }
+
+        .query-param-input {
+            width: 100%;
+            padding: 10px;
+            background: #1a1a2e;
+            border: 1px solid rgba(100, 100, 120, 0.3);
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+
+        .button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            margin-top: 10px;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        .button:active {
+            transform: translateY(0);
+        }
+
+        .button:disabled {
+            background: #555;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+
+        .status.success {
+            background: rgba(81, 207, 102, 0.2);
+            border: 1px solid rgba(81, 207, 102, 0.5);
+            color: #51cf66;
+        }
+
+        .status.error {
+            background: rgba(255, 107, 107, 0.2);
+            border: 1px solid rgba(255, 107, 107, 0.5);
+            color: #ff6b6b;
+        }
+
+        .status.info {
+            background: rgba(100, 180, 255, 0.2);
+            border: 1px solid rgba(100, 180, 255, 0.5);
+            color: #64b4ff;
+        }
+
+        .response-display {
+            background: #1a1a2e;
+            border: 1px solid rgba(100, 100, 120, 0.3);
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            color: #e0e0e0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+
+        .description {
+            color: #b0b0b0;
+            font-size: 0.9em;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: rgba(30, 30, 45, 0.6);
+            border-radius: 4px;
+        }
+
+        .label {
+            display: block;
+            color: #b0c4ff;
+            font-weight: bold;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Backend API Diagnostic</h1>
+        <p class="subtitle">Test all endpoints of the prediction server with custom payloads</p>
+
+        <div class="server-config">
+            <h2>Server Configuration</h2>
+            <label class="label">Server Base URL:</label>
+            <input type="text" id="serverUrl" class="url-input" value="https://localhost:8444" placeholder="https://localhost:8444">
+            <div style="font-size: 0.85em; color: #888; margin-top: 5px;">
+                Change "localhost" to your server's IP address to test from other devices
+            </div>
+        </div>
+
+        <div class="endpoints-grid">
+            <!-- POST /predict_phrase -->
+            <div class="endpoint-card">
+                <h3>
+                    <span class="method-badge post">POST</span>
+                    /predict_phrase
+                </h3>
+                <div class="endpoint-path">Get next predicted phrase (low latency)</div>
+                <div class="description">
+                    Predicts the next 4-beat phrase. Accepts pulse data, BPM, and patterns.
+                </div>
+                <label class="label">Request Payload (JSON):</label>
+                <textarea class="payload-input" id="predictPhrasePayload">{
+  "client_now_ms": 0,
+  "server_offset_estimate_ms": 0,
+  "recentPulseTimestamps": [],
+  "recentPulseDurations": [],
+  "recentPulsePatterns": [],
+  "recentPulseDurationsSlots": [],
+  "currentBPM": 120.0,
+  "bpmHistory": [120.0],
+  "device_id": "test-device",
+  "sequence_id": 1
+}</textarea>
+                <button class="button" onclick="testEndpoint('predict_phrase', 'POST', 'predictPhrasePayload')">
+                    🚀 Send Request
+                </button>
+                <div id="predictPhraseStatus"></div>
+                <div id="predictPhraseResponse" class="response-display" style="display: none;"></div>
+            </div>
+
+            <!-- POST /pulse -->
+            <div class="endpoint-card">
+                <h3>
+                    <span class="method-badge post">POST</span>
+                    /pulse
+                </h3>
+                <div class="endpoint-path">Submit pulse event from device</div>
+                <div class="description">
+                    Submits a single pulse event to the prediction engine.
+                </div>
+                <label class="label">Request Payload (JSON):</label>
+                <textarea class="payload-input" id="pulsePayload">{
+  "device_id": "test-device",
+  "source_id": "test-source",
+  "t_device_ms": 0,
+  "dur_ms": 100.0,
+  "meta": {}
+}</textarea>
+                <button class="button" onclick="testEndpoint('pulse', 'POST', 'pulsePayload')">
+                    🚀 Send Request
+                </button>
+                <div id="pulseStatus"></div>
+                <div id="pulseResponse" class="response-display" style="display: none;"></div>
+            </div>
+
+            <!-- POST /prediction (Legacy) -->
+            <div class="endpoint-card">
+                <h3>
+                    <span class="method-badge post">POST</span>
+                    /prediction
+                </h3>
+                <div class="endpoint-path">Legacy prediction endpoint</div>
+                <div class="description">
+                    Legacy endpoint for backward compatibility. Stores prediction data and returns average BPM.
+                </div>
+                <label class="label">Request Payload (JSON):</label>
+                <textarea class="payload-input" id="predictionPayload">{
+  "currentBPM": 120.0,
+  "bpmHistory": [120.0, 121.0, 119.0],
+  "recentPulsePatterns": [[0,0,1,0,0,0,1,0]],
+  "recentCorrectPredictionParts": [[0,0,1,0]],
+  "currentPrediction": [0,0,1,0,0,0,1,0],
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}</textarea>
+                <button class="button" onclick="testEndpoint('prediction', 'POST', 'predictionPayload')">
+                    🚀 Send Request
+                </button>
+                <div id="predictionStatus"></div>
+                <div id="predictionResponse" class="response-display" style="display: none;"></div>
+            </div>
+
+            <!-- GET /status -->
+            <div class="endpoint-card">
+                <h3>
+                    <span class="method-badge get">GET</span>
+                    /status
+                </h3>
+                <div class="endpoint-path">Get prediction engine status</div>
+                <div class="description">
+                    Returns the current status of the prediction engine, including mode and state.
+                </div>
+                <button class="button" onclick="testEndpoint('status', 'GET')">
+                    🚀 Send Request
+                </button>
+                <div id="statusStatus"></div>
+                <div id="statusResponse" class="response-display" style="display: none;"></div>
+            </div>
+
+            <!-- GET /stats -->
+            <div class="endpoint-card">
+                <h3>
+                    <span class="method-badge get">GET</span>
+                    /stats
+                </h3>
+                <div class="endpoint-path">Get database statistics</div>
+                <div class="description">
+                    Returns statistics about stored predictions (total count, avg BPM, unique sources, etc.).
+                </div>
+                <button class="button" onclick="testEndpoint('stats', 'GET')">
+                    🚀 Send Request
+                </button>
+                <div id="statsStatus"></div>
+                <div id="statsResponse" class="response-display" style="display: none;"></div>
+            </div>
+
+            <!-- GET /recent -->
+            <div class="endpoint-card">
+                <h3>
+                    <span class="method-badge get">GET</span>
+                    /recent
+                </h3>
+                <div class="endpoint-path">Get recent predictions</div>
+                <div class="description">
+                    Returns recent prediction records from the database. Optional limit query parameter.
+                </div>
+                <label class="label">Query Parameter (limit):</label>
+                <input type="number" id="recentLimit" class="query-param-input" value="10" min="1" max="1000" placeholder="10">
+                <button class="button" onclick="testEndpoint('recent', 'GET', null, 'recentLimit')">
+                    🚀 Send Request
+                </button>
+                <div id="recentStatus"></div>
+                <div id="recentResponse" class="response-display" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Get server base URL
+        function getServerUrl() {
+            return document.getElementById('serverUrl').value.trim();
+        }
+
+        // Convert endpoint name to element ID prefix
+        function endpointToElementId(endpoint) {
+            const mapping = {
+                'predict_phrase': 'predictPhrase',
+                'pulse': 'pulse',
+                'prediction': 'prediction',
+                'status': 'status',
+                'stats': 'stats',
+                'recent': 'recent'
+            };
+            return mapping[endpoint] || endpoint;
+        }
+
+        // Show status message
+        function showStatus(endpointName, type, message) {
+            const elementId = endpointToElementId(endpointName);
+            const statusDiv = document.getElementById(elementId + 'Status');
+            if (!statusDiv) {
+                console.error(`Element not found: ${elementId}Status`);
+                return;
+            }
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+            setTimeout(() => {
+                statusDiv.textContent = '';
+                statusDiv.className = '';
+            }, 10000);
+        }
+
+        // Show response
+        function showResponse(endpointName, data) {
+            const elementId = endpointToElementId(endpointName);
+            const responseDiv = document.getElementById(elementId + 'Response');
+            if (!responseDiv) {
+                console.error(`Element not found: ${elementId}Response`);
+                return;
+            }
+            responseDiv.style.display = 'block';
+            try {
+                responseDiv.textContent = JSON.stringify(data, null, 2);
+            } catch (e) {
+                responseDiv.textContent = String(data);
+            }
+        }
+
+        // Test an endpoint
+        async function testEndpoint(endpoint, method, payloadElementId = null, queryParamElementId = null) {
+            const baseUrl = getServerUrl();
+            let url = `${baseUrl}/${endpoint}`;
+            
+            // Add query parameters for GET requests
+            if (method === 'GET' && queryParamElementId) {
+                const queryParamValue = document.getElementById(queryParamElementId).value;
+                if (queryParamValue) {
+                    url += `?limit=${encodeURIComponent(queryParamValue)}`;
+                }
+            }
+
+            showStatus(endpoint, 'info', `Sending ${method} request to ${url}...`);
+
+            try {
+                let options = {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                };
+
+                // Add body for POST requests
+                if (method === 'POST' && payloadElementId) {
+                    const payloadText = document.getElementById(payloadElementId).value;
+                    try {
+                        const payload = JSON.parse(payloadText);
+                        options.body = JSON.stringify(payload);
+                    } catch (e) {
+                        showStatus(endpoint, 'error', `Invalid JSON payload: ${e.message}`);
+                        return;
+                    }
+                }
+
+                const startTime = performance.now();
+                const response = await fetch(url, options);
+                const duration = performance.now() - startTime;
+
+                let responseData;
+                const responseText = await response.text();
+                
+                try {
+                    responseData = JSON.parse(responseText);
+                } catch (e) {
+                    responseData = responseText;
+                }
+
+                if (response.ok) {
+                    showStatus(endpoint, 'success', `✅ Success! (${response.status}) - ${duration.toFixed(0)}ms`);
+                    showResponse(endpoint, responseData);
+                } else {
+                    showStatus(endpoint, 'error', `❌ Failed! (${response.status} ${response.statusText}) - ${duration.toFixed(0)}ms`);
+                    showResponse(endpoint, responseData);
+                }
+            } catch (error) {
+                showStatus(endpoint, 'error', `❌ Error: ${error.message}`);
+                
+                // Check for SSL/certificate issues
+                if (error.message.includes('Failed to fetch') || error.message.includes('Load failed')) {
+                    const errorInfo = {
+                        error: error.message,
+                        note: "This might be an SSL certificate issue. Make sure you've accepted the self-signed certificate by visiting the server URL in your browser first.",
+                        suggestion: `Try visiting ${baseUrl}/status in a new tab first to accept the certificate.`
+                    };
+                    showResponse(endpoint, errorInfo);
+                } else {
+                    showResponse(endpoint, { error: error.message, type: error.constructor.name });
+                }
+            }
+        }
+
+        // Auto-update timestamps in payloads
+        function updateTimestamps() {
+            const now = performance.now();
+            const nowMs = Date.now();
+
+            // Update predict_phrase payload
+            const predictPhrasePayload = document.getElementById('predictPhrasePayload');
+            try {
+                const payload = JSON.parse(predictPhrasePayload.value);
+                payload.client_now_ms = now;
+                payload.sequence_id = nowMs;
+                predictPhrasePayload.value = JSON.stringify(payload, null, 2);
+            } catch (e) {
+                // Ignore if not valid JSON
+            }
+
+            // Update pulse payload
+            const pulsePayload = document.getElementById('pulsePayload');
+            try {
+                const payload = JSON.parse(pulsePayload.value);
+                payload.t_device_ms = nowMs;
+                pulsePayload.value = JSON.stringify(payload, null, 2);
+            } catch (e) {
+                // Ignore if not valid JSON
+            }
+
+            // Update prediction payload
+            const predictionPayload = document.getElementById('predictionPayload');
+            try {
+                const payload = JSON.parse(predictionPayload.value);
+                payload.timestamp = new Date().toISOString();
+                predictionPayload.value = JSON.stringify(payload, null, 2);
+            } catch (e) {
+                // Ignore if not valid JSON
+            }
+        }
+
+        // Update timestamps on load and every 5 seconds
+        window.addEventListener('load', () => {
+            updateTimestamps();
+            setInterval(updateTimestamps, 5000);
+        });
+
+        // Replace localhost with IP if page is loaded from IP
+        window.addEventListener('load', () => {
+            const hostname = window.location.hostname;
+            if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+                const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+                if (ipPattern.test(hostname)) {
+                    const serverUrlInput = document.getElementById('serverUrl');
+                    if (serverUrlInput.value.includes('localhost')) {
+                        serverUrlInput.value = serverUrlInput.value.replace(/localhost/g, hostname);
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

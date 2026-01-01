@@ -2,6 +2,15 @@
 // Beat Detection Integration
 // -----------------------------
 
+// Pulse buffer for batching (currently not used, but kept for potential future use)
+// This function was intended for batching pulses to send to the /predict_phrase endpoint
+// Since we're now using the /prediction endpoint when client makes predictions,
+// this is a no-op stub
+function addPulseToBuffer(t_device_ms, dur_ms, meta) {
+    // No-op: pulse buffering not currently used
+    // If needed in the future for /predict_phrase endpoint, implement buffering logic here
+}
+
 async function startListening() {
     try {
         setListeningState(true);
@@ -139,4 +148,6 @@ function checkIfHasEnoughData() {
     
     return newHasEnoughData;
 }
+
+
 
